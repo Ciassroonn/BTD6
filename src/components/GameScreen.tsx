@@ -343,7 +343,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   const [round, setRound] = useState<number>(1);
   const [roundInProgress, setRoundInProgress] = useState<boolean>(false);
-  const [autoPlay, setAutoPlay] = useState<boolean>(false);
+  const [autoPlay, setAutoPlay] = useState<boolean>(true);
 
   // Sandbox mode controller states
   const [sandboxTab, setSandboxTab] = useState<'spawn' | 'cheats'>('spawn');
@@ -476,14 +476,22 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   // --- BATTLES 2 MP HELPERS ---
   const startBattlesHost = () => {
+    console.log("startBattlesHost clicked!");
     try {
-      const pin = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit PIN
+      const pin = Math.floor(100000 + Math.random() * 900005).toString(); // 6 digit PIN
       setBattlesPeerId(pin);
       setMpRole('host');
-      setMpStatus('Connecting to multiplayer server...');
-
+      
+      let host = 'localhost:3000';
+      try {
+        host = window.location.host || window.location.hostname + (window.location.port ? ':' + window.location.port : '');
+      } catch (err) {
+        console.warn('Iframe blocked window.location.host access, using fallback.');
+      }
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const wsUrl = `${protocol}//${host || 'localhost:3000'}/ws`;
+      
+      setMpStatus(`Connecting to multiplayer server via ${wsUrl}...`);
       const ws = new WebSocket(wsUrl);
 
       peerRef.current = ws; // Store the WebSocket object in peerRef
@@ -517,7 +525,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       ws.onerror = (err) => {
         console.error('WS Host Error:', err);
-        setMpStatus('Connection failed. Playing offline.');
+        setMpStatus(`Connection error to ${wsUrl}. Playing offline with local AI opponent.`);
       };
 
       ws.onclose = () => {
@@ -536,13 +544,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         }
       };
 
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      setMpStatus('Error creating connection.');
+      setMpStatus(`Error creating connection: ${e?.message || e}`);
     }
   };
 
   const joinBattlesRoom = (code: string) => {
+    console.log("joinBattlesRoom clicked with PIN:", code);
     try {
       const pin = code.trim();
       if (!pin) {
@@ -552,8 +561,16 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       setMpRole('client');
       setMpStatus('Connecting to multiplayer server...');
 
+      let host = 'localhost:3000';
+      try {
+        host = window.location.host || window.location.hostname + (window.location.port ? ':' + window.location.port : '');
+      } catch (err) {
+        console.warn('Iframe blocked window.location.host access, using fallback.');
+      }
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const wsUrl = `${protocol}//${host || 'localhost:3000'}/ws`;
+
+      setMpStatus(`Joining Room ${pin} via ${wsUrl}...`);
       const ws = new WebSocket(wsUrl);
 
       peerRef.current = ws; // Store the WebSocket object in peerRef
@@ -587,7 +604,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       ws.onerror = (err) => {
         console.error('WS Guest Error:', err);
-        setMpStatus('Connection failed. Playing offline.');
+        setMpStatus(`Connection error to ${wsUrl}. Playing offline with local AI opponent.`);
       };
 
       ws.onclose = () => {
@@ -2734,20 +2751,27 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
           {/* Relocated active wave, fast forward, and autoplay controls bar */}
           <div className="flex items-center gap-2.5">
-            {/* Play Round Trigger */}
-            <button
+            {/* Play Round Trigger / Status Badge */}
+            <div
               id="active-round-trigger"
-              disabled={roundInProgress}
-              onClick={startRound}
-              className={`px-3.5 py-1.5 font-black font-sans text-xs rounded-xl flex items-center gap-1 border-b-4 uppercase transition-all select-none ${
+              className={`px-3.5 py-1.5 font-black font-sans text-xs rounded-xl flex items-center gap-1.5 border-b-4 uppercase transition-all select-none ${
                 roundInProgress
-                  ? 'bg-slate-700 text-white/40 cursor-not-allowed border-slate-900'
-                  : 'bg-emerald-500 hover:bg-emerald-400 text-white border-emerald-700 hover:scale-[1.03] cursor-pointer animate-pulse'
+                  ? 'bg-slate-800 text-cyan-400 border-slate-950/40'
+                  : 'bg-emerald-600 text-emerald-100 border-emerald-800 animate-pulse'
               }`}
             >
-              <Play className="w-3.5 h-3.5 fill-current text-white" />
-              <span>{roundInProgress ? 'Defending' : `START WAVE ${round}`}</span>
-            </button>
+              {roundInProgress ? (
+                <>
+                  <span className="w-2.5 h-2.5 bg-cyan-400 rounded-full animate-pulse"></span>
+                  <span>Defending Wave {round}...</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                  <span>Next Wave starting...</span>
+                </>
+              )}
+            </div>
 
             {/* Fast Forward Speed Factor */}
             <button
@@ -2756,22 +2780,16 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 const next = speedMultiplier === 1 ? 2 : speedMultiplier === 2 ? 3 : 1;
                 setSpeedMultiplier(next);
               }}
-              className="px-2.5 py-1.5 bg-blue-500 hover:bg-blue-400 border-b-2 border-blue-700 text-white text-xs font-black rounded-lg cursor-pointer uppercase font-sans whitespace-nowrap"
+              className="px-2.5 py-1.5 bg-blue-500 hover:bg-blue-400 border-b-2 border-blue-700 text-white text-xs font-black rounded-lg cursor-pointer uppercase font-sans whitespace-nowrap transition-all"
               title="Toggle speed multiplier"
             >
-              {speedMultiplier}x FF
+              {speedMultiplier}x Speed
             </button>
 
-            <label className="flex items-center gap-1.5 text-[10px] text-white/85 font-black cursor-pointer uppercase font-sans select-none">
-              <input
-                id="check-autoplay"
-                type="checkbox"
-                checked={autoPlay}
-                onChange={(e) => setAutoPlay(e.target.checked)}
-                className="rounded text-[var(--app-accent)] bg-black/45 w-3.5 h-3.5 border-white/20 focus:ring-0 cursor-pointer"
-              />
-              <span>AUTO START</span>
-            </label>
+            <div className="flex items-center gap-1.5 text-[10px] text-cyan-300 font-black uppercase font-sans select-none bg-cyan-950/40 px-2.5 py-1.5 rounded-lg border border-cyan-500/25">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+              <span>AUTO START ACTIVE</span>
+            </div>
           </div>
         </div>
 
@@ -3337,37 +3355,41 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 )}
 
                 {!isMultiplayerConnected ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs relative z-30">
                     {/* Column 1: Host Room */}
-                    <div className="bg-black/35 p-2.5 rounded-xl border border-white/5 flex flex-col gap-2 justify-center">
+                    <div className="bg-black/35 p-3 rounded-xl border border-white/5 flex flex-col gap-2.5 justify-center">
                       <button
+                        id="btn-host-online-room"
+                        type="button"
                         onClick={startBattlesHost}
-                        className="py-2 px-3 bg-cyan-600 hover:bg-cyan-500 text-white font-black rounded-lg transition-all text-center cursor-pointer uppercase text-[10px]"
+                        className="py-2.5 px-4 bg-cyan-65 border-b-4 border-cyan-800 hover:bg-cyan-550 text-white font-black rounded-lg transition-all text-center cursor-pointer uppercase text-xs shadow-md"
                       >
                         🌐 Host Online Room
                       </button>
                       {battlesPeerId && (
                         <div className="text-center mt-1">
-                          <span className="text-white/60 font-black uppercase text-[10px] block">YOUR ROOM PIN:</span>
-                          <span className="text-xl font-black text-cyan-400 tracking-widest bg-cyan-500/10 px-4 py-1.5 rounded-lg border border-cyan-500/20 inline-block mt-1">{battlesPeerId}</span>
+                          <span className="text-white/60 font-black uppercase text-[9px] block">YOUR ROOM PIN:</span>
+                          <span className="text-xl font-black text-cyan-400 tracking-widest bg-cyan-500/15 px-4 py-1.5 rounded-lg border border-cyan-500/35 inline-block mt-1 font-mono">{battlesPeerId}</span>
                           <span className="text-[9px] text-white/50 block mt-1">Share this PIN with your friend to connect!</span>
                         </div>
                       )}
                     </div>
 
                     {/* Column 2: Join Room */}
-                    <div className="bg-black/35 p-2.5 rounded-xl border border-white/5 flex flex-col gap-2 justify-center">
-                      <div className="flex gap-1">
+                    <div className="bg-black/35 p-3 rounded-xl border border-white/5 flex flex-col gap-2.5 justify-center">
+                      <div className="flex gap-1 flex-row">
                         <input
                           type="text"
-                          placeholder="Enter Room PIN code"
+                          placeholder="Room PIN"
                           value={battlesJoinCode}
                           onChange={(e) => setBattlesJoinCode(e.target.value)}
-                          className="flex-1 bg-slate-950 border border-white/10 px-3 py-1.5 rounded-lg text-white font-black uppercase text-center focus:outline-none focus:border-cyan-500 text-xs"
+                          className="flex-1 min-w-0 bg-slate-950 border border-white/15 px-3 py-1.5 rounded-lg text-white font-black uppercase text-center focus:outline-none focus:border-cyan-500 text-xs"
                         />
                         <button
+                          id="btn-join-battles-room"
+                          type="button"
                           onClick={() => joinBattlesRoom(battlesJoinCode)}
-                          className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-lg transition-all cursor-pointer uppercase text-[10px]"
+                          className="py-2.5 px-3 bg-emerald-650 border-b-4 border-emerald-800 hover:bg-emerald-555 text-white font-black rounded-lg transition-all cursor-pointer uppercase text-xs shadow-md"
                         >
                           Join PIN
                         </button>

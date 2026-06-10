@@ -301,7 +301,7 @@ export default function App() {
   };
 
   // Start campaign match callback
-  const handleStartGame = (mapId: string, hero: HeroType, diff: Difficulty, mode: 'campaign' | 'endless' | 'sandbox') => {
+  const handleStartGame = (mapId: string, hero: HeroType, diff: Difficulty, mode: 'campaign' | 'endless' | 'sandbox' | 'battles2') => {
     setSelectedMapId(mapId);
     setSelectedHero(hero);
     setSelectedDifficulty(diff);
