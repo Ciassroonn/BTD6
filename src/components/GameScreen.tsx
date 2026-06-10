@@ -393,6 +393,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const [battlesJoinCode, setBattlesJoinCode] = useState<string>('');
   const [isMultiplayerConnected, setIsMultiplayerConnected] = useState<boolean>(false);
   const [mpRole, setMpRole] = useState<'host' | 'client' | null>(null);
+  const [mpStatus, setMpStatus] = useState<string>('');
 
   const battlesEcoRef = useRef<number>(250);
   const battlesOpponentEcoRef = useRef<number>(250);
@@ -477,7 +478,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const startBattlesHost = () => {
     try {
       const pin = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit PIN
+      setBattlesPeerId(pin);
       setMpRole('host');
+      setMpStatus('Connecting to multiplayer server...');
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -487,6 +490,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       ws.onopen = () => {
         console.log('WS Connection opened as host');
+        setMpStatus('Registering Room on server...');
         ws.send(JSON.stringify({ type: 'host', room: pin }));
       };
 
@@ -495,11 +499,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           const message = JSON.parse(event.data);
           if (message.type === 'host-success') {
             setBattlesPeerId(pin);
+            setMpStatus('Waiting for your opponent to join...');
             console.log('WebSocket Host setup complete, PIN:', pin);
           } else if (message.type === 'companion-connected') {
             setIsMultiplayerConnected(true);
+            setMpStatus('Opponent connected! Fight!');
           } else if (message.type === 'companion-disconnected') {
             setIsMultiplayerConnected(false);
+            setMpStatus('Opponent disconnected! Switched to AI fallback.');
           } else {
             handleIncomingMpData(message);
           }
@@ -510,10 +517,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       ws.onerror = (err) => {
         console.error('WS Host Error:', err);
+        setMpStatus('Connection failed. Playing offline.');
       };
 
       ws.onclose = () => {
         setIsMultiplayerConnected(false);
+        setMpStatus('Connection closed.');
       };
 
       connRef.current = {
@@ -529,13 +538,19 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
     } catch (e) {
       console.error(e);
+      setMpStatus('Error creating connection.');
     }
   };
 
   const joinBattlesRoom = (code: string) => {
     try {
       const pin = code.trim();
+      if (!pin) {
+        setMpStatus('Please enter a valid PIN.');
+        return;
+      }
       setMpRole('client');
+      setMpStatus('Connecting to multiplayer server...');
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -545,6 +560,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       ws.onopen = () => {
         console.log('WS Connection opened as client');
+        setMpStatus(`Joining Room ${pin}...`);
         ws.send(JSON.stringify({ type: 'join', room: pin }));
       };
 
@@ -552,11 +568,15 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         try {
           const message = JSON.parse(event.data);
           if (message.type === 'join-success') {
+            setBattlesPeerId(pin);
+            setMpStatus('Successfully joined! Waiting for host to load game...');
             console.log('WebSocket Client successfully joined room:', pin);
           } else if (message.type === 'companion-connected') {
             setIsMultiplayerConnected(true);
+            setMpStatus('Opponent connected! Fight!');
           } else if (message.type === 'companion-disconnected') {
             setIsMultiplayerConnected(false);
+            setMpStatus('Opponent disconnected! Switched to AI fallback.');
           } else {
             handleIncomingMpData(message);
           }
@@ -567,10 +587,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       ws.onerror = (err) => {
         console.error('WS Guest Error:', err);
+        setMpStatus('Connection failed. Playing offline.');
       };
 
       ws.onclose = () => {
         setIsMultiplayerConnected(false);
+        setMpStatus('Connection closed.');
       };
 
       connRef.current = {
@@ -586,6 +608,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
     } catch (e) {
       console.error(e);
+      setMpStatus('Error joining room.');
     }
   };
 
@@ -3306,6 +3329,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     </span>
                   )}
                 </div>
+
+                {mpStatus && (
+                  <div className="text-[10px] text-cyan-300 font-bold bg-cyan-950/40 p-2 rounded-lg border border-cyan-500/25 text-center uppercase tracking-wide">
+                    🌐 Status: {mpStatus}
+                  </div>
+                )}
 
                 {!isMultiplayerConnected ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">

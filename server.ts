@@ -111,14 +111,18 @@ wss.on('connection', (ws) => {
 
 // Hook WS server to HTTP upgrade on /ws
 server.on('upgrade', (request, socket, head) => {
-  const { pathname } = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
-  if (pathname === '/ws') {
+  const url = request.url || '';
+  const pathname = url.split('?')[0];
+
+  if (pathname === '/ws' || pathname === '/ws/' || pathname.startsWith('/ws')) {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
     });
-  } else {
+  } else if (process.env.NODE_ENV === 'production') {
+    // In production, safely destroy other connections to prevent socket leaks
     socket.destroy();
   }
+  // In development, do not destroy other sockets (e.g., Vite HMR)
 });
 
 // Initialize Vite and Start Server
