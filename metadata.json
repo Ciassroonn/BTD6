@@ -1,0 +1,6 @@
+{
+  "name": "Bloons Tower Defense",
+  "description": "A colorful, action-packed 2D tower defense game inspired by Bloons TD 6. Place, upgrade, and strategize with multiple monkey towers, heroes, and persistent progression across five unique maps!",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
