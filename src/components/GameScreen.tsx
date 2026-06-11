@@ -95,6 +95,34 @@ interface GameScreenProps {
   onChangeTheme?: (colors: ThemeColors) => void;
 }
 
+interface SendableBloonConfig {
+  type: BloonType;
+  emoji: string;
+  cost: number;
+  eco: number;
+  unlockRound: number;
+}
+
+export const SENDABLE_BLOONS: SendableBloonConfig[] = [
+  { type: 'Red', emoji: '🔴', cost: 20, eco: 1.0, unlockRound: 1 },
+  { type: 'Blue', emoji: '🔵', cost: 25, eco: 1.2, unlockRound: 2 },
+  { type: 'Green', emoji: '🟢', cost: 35, eco: 1.4, unlockRound: 3 },
+  { type: 'Yellow', emoji: '🟡', cost: 45, eco: 1.6, unlockRound: 4 },
+  { type: 'Pink', emoji: '🌸', cost: 60, eco: 2.0, unlockRound: 5 },
+  { type: 'Purple', emoji: '🟣', cost: 70, eco: 2.2, unlockRound: 6 },
+  { type: 'Black', emoji: '⚫', cost: 80, eco: 2.4, unlockRound: 8 },
+  { type: 'White', emoji: '⚪', cost: 85, eco: 2.5, unlockRound: 9 },
+  { type: 'Lead', emoji: '🛡️', cost: 100, eco: 3.0, unlockRound: 10 },
+  { type: 'Zebra', emoji: '🦓', cost: 110, eco: 3.2, unlockRound: 12 },
+  { type: 'Rainbow', emoji: '🌈', cost: 130, eco: 3.5, unlockRound: 14 },
+  { type: 'Ceramic', emoji: '🗿', cost: 180, eco: 4.5, unlockRound: 16 },
+  { type: 'MOAB', emoji: '🛸', cost: 350, eco: 6.0, unlockRound: 18 },
+  { type: 'BFB', emoji: '🎈', cost: 700, eco: 10.0, unlockRound: 20 },
+  { type: 'ZOMG', emoji: '💀', cost: 1500, eco: 18.0, unlockRound: 22 },
+  { type: 'DDT', emoji: '🚀', cost: 1800, eco: 22.0, unlockRound: 24 },
+  { type: 'BAD', emoji: '👑', cost: 3000, eco: 35.5, unlockRound: 26 },
+];
+
 // Math Utility: Calculate shortest distance from point (px, py) to line segment (ax, ay) -> (bx, by)
 function getDistanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
   const dx = bx - ax;
@@ -405,6 +433,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const [battlesOpponentCash, setBattlesOpponentCash] = useState<number>(650);
   const [battlesOpponentLives, setBattlesOpponentLives] = useState<number>(150);
 
+  const [autoSendBloon, setAutoSendBloon] = useState<BloonType | null>(null);
+  const autoSendBloonRef = useRef<BloonType | null>(null);
+  useEffect(() => {
+    autoSendBloonRef.current = autoSendBloon;
+  }, [autoSendBloon]);
+
   const [battlesPeerId, setBattlesPeerId] = useState<string>('');
   const [battlesJoinCode, setBattlesJoinCode] = useState<string>('');
   const [isMultiplayerConnected, setIsMultiplayerConnected] = useState<boolean>(false);
@@ -500,17 +534,20 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       });
 
       const eventsRef = collection(db, 'battles_rooms', pin, 'events');
-      const q = query(eventsRef, orderBy('timestamp', 'asc'));
-      
-      let lastProcessedTimestamp = Date.now();
+      const processedEventIds = new Set<string>();
 
-      const unsubscribeEvents = onSnapshot(q, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added') {
-            const eventDoc = change.doc.data();
-            if (eventDoc.sender === 'client' && eventDoc.timestamp > lastProcessedTimestamp) {
-              handleIncomingMpData(eventDoc);
-            }
+      const unsubscribeEvents = onSnapshot(eventsRef, (snapshot) => {
+        const sortedDocs = snapshot.docChanges()
+          .filter(change => change.type === 'added')
+          .map(change => ({ id: change.doc.id, data: change.doc.data() }))
+          .sort((a, b) => (a.data.timestamp || 0) - (b.data.timestamp || 0));
+
+        sortedDocs.forEach(({ id, data }) => {
+          if (processedEventIds.has(id)) return;
+          processedEventIds.add(id);
+
+          if (data.sender === 'client') {
+            handleIncomingMpData(data);
           }
         });
       }, (error) => {
@@ -592,17 +629,20 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       });
 
       const eventsRef = collection(db, 'battles_rooms', pin, 'events');
-      const q = query(eventsRef, orderBy('timestamp', 'asc'));
-      
-      let lastProcessedTimestamp = Date.now();
+      const processedEventIds = new Set<string>();
 
-      const unsubscribeEvents = onSnapshot(q, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added') {
-            const eventDoc = change.doc.data();
-            if (eventDoc.sender === 'host' && eventDoc.timestamp > lastProcessedTimestamp) {
-              handleIncomingMpData(eventDoc);
-            }
+      const unsubscribeEvents = onSnapshot(eventsRef, (snapshot) => {
+        const sortedDocs = snapshot.docChanges()
+          .filter(change => change.type === 'added')
+          .map(change => ({ id: change.doc.id, data: change.doc.data() }))
+          .sort((a, b) => (a.data.timestamp || 0) - (b.data.timestamp || 0));
+
+        sortedDocs.forEach(({ id, data }) => {
+          if (processedEventIds.has(id)) return;
+          processedEventIds.add(id);
+
+          if (data.sender === 'host') {
+            handleIncomingMpData(data);
           }
         });
       }, (error) => {
@@ -755,6 +795,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     battlesOpponentEcoRef.current = 250;
 
     setRound(1);
+    roundRef.current = 1;
     setRoundInProgress(false);
     setCash(650);
     setLives(150);
@@ -964,13 +1005,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   };
 
   const sendBloonToOpponent = (bloonType: string) => {
-    const ecoCost = bloonType === 'MOAB' ? 300 : bloonType === 'Ceramic' ? 150 : bloonType === 'Rainbow' ? 80 : bloonType === 'Yellow' ? 45 : 20;
-    const ecoAdd = bloonType === 'MOAB' ? 6 : bloonType === 'Ceramic' ? 4.5 : bloonType === 'Rainbow' ? 2.5 : bloonType === 'Yellow' ? 1.5 : 1.0;
+    const config = SENDABLE_BLOONS.find((b) => b.type === bloonType);
+    if (!config) return;
+
+    if (roundRef.current < config.unlockRound) return;
+
+    const ecoCost = config.cost;
+    const ecoAdd = config.eco;
 
     if (!isMultiplayerConnected) return;
 
-    if (cash >= ecoCost) {
-      setCash((c) => c - ecoCost);
+    if (cashRef.current >= ecoCost) {
+      setCash((c) => {
+        if (c < ecoCost) return c; // Double check buffer
+        return c - ecoCost;
+      });
       setBattlesEco((e) => e + ecoAdd);
 
       if (connRef.current) {
@@ -983,6 +1032,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       }
     }
   };
+
+  useEffect(() => {
+    if (gameMode !== 'battles2' || !isMultiplayerConnected) return;
+
+    const interval = setInterval(() => {
+      if (autoSendBloonRef.current && !isGameOverOrFinishedRef.current) {
+        sendBloonToOpponent(autoSendBloonRef.current);
+      }
+    }, 450);
+
+    return () => clearInterval(interval);
+  }, [gameMode, isMultiplayerConnected]);
 
   // Sync volume controller
   const handleToggleMute = () => {
@@ -2744,20 +2805,22 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         }
       }
 
-      // Give Cash reward (scales downward as rounds progress)
-      const incomeScale = getIncomeMultiplier(round);
-      const finalReward = b.reward * incomeScale;
-      setCash((c) => c + finalReward);
+      // Give Cash reward (scales downward as rounds progress) - disabled in Battles 2
+      if (gameModeRef.current !== 'battles2') {
+        const incomeScale = getIncomeMultiplier(round);
+        const finalReward = b.reward * incomeScale;
+        setCash((c) => c + finalReward);
 
-      // Create floating text cash
-      floatingTextsRef.current.push({
-        id: `c_${Date.now()}_${Math.random()}`,
-        x: b.x,
-        y: b.y,
-        text: `+$${finalReward.toFixed(2).replace(/\.00$/, '')}`,
-        color: '#22c55e',
-        life: 30,
-      });
+        // Create floating text cash
+        floatingTextsRef.current.push({
+          id: `c_${Date.now()}_${Math.random()}`,
+          x: b.x,
+          y: b.y,
+          text: `+$${finalReward.toFixed(2).replace(/\.00$/, '')}`,
+          color: '#22c55e',
+          life: 30,
+        });
+      }
 
       // Pop splash particles
       for (let i = 0; i < 4; i++) {
@@ -3838,55 +3901,82 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
               {/* RUSH OPPONENT CONTROLS */}
               <div className="w-full bg-slate-900/90 border border-white/10 p-3.5 rounded-2xl flex flex-col gap-3 font-sans shadow-xl">
-                <span className="text-[10px] font-black uppercase text-center tracking-widest text-white/60">
-                  ⚔️ ECO RUSH OPPONENT (SEND BLOON WAVES TO OPPRESS TARGET)
-                </span>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 w-full">
-                  <button
-                    onClick={() => sendBloonToOpponent('Red')}
-                    disabled={cash < 20}
-                    className="py-2 px-1.5 bg-red-650 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-[9px] rounded-xl border-b-4 border-red-900 flex flex-col items-center justify-center gap-1 cursor-pointer transition-all uppercase"
-                  >
-                    <span className="text-sm">🔴</span>
-                    <span>Send Red</span>
-                    <span className="text-[8px] text-yellow-300">-$20 (ECO +1.0)</span>
-                  </button>
-                  <button
-                    onClick={() => sendBloonToOpponent('Yellow')}
-                    disabled={cash < 45}
-                    className="py-2 px-1.5 bg-yellow-650 hover:bg-yellow-600 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-black text-[9px] rounded-xl border-b-4 border-yellow-900 flex flex-col items-center justify-center gap-1 cursor-pointer transition-all uppercase"
-                  >
-                    <span className="text-sm">🟡</span>
-                    <span>Send Yellow</span>
-                    <span className="text-[8px] text-yellow-950">-$45 (ECO +1.5)</span>
-                  </button>
-                  <button
-                    onClick={() => sendBloonToOpponent('Rainbow')}
-                    disabled={cash < 80}
-                    className="py-2 px-1.5 bg-pink-650 hover:bg-pink-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-[9px] rounded-xl border-b-4 border-pink-900 flex flex-col items-center justify-center gap-1 cursor-pointer transition-all uppercase"
-                  >
-                    <span className="text-sm">🌈</span>
-                    <span>Send Rainbow</span>
-                    <span className="text-[8px] text-yellow-300">-$80 (ECO +2.5)</span>
-                  </button>
-                  <button
-                    onClick={() => sendBloonToOpponent('Ceramic')}
-                    disabled={cash < 150}
-                    className="py-2 px-1.5 bg-zinc-600 hover:bg-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-[9px] rounded-xl border-b-4 border-zinc-800 flex flex-col items-center justify-center gap-1 cursor-pointer transition-all uppercase"
-                  >
-                    <span className="text-sm">🗿</span>
-                    <span>Send Ceramic</span>
-                    <span className="text-[8px] text-yellow-300">-$150 (ECO +4.5)</span>
-                  </button>
-                  <button
-                    onClick={() => sendBloonToOpponent('MOAB')}
-                    disabled={cash < 300}
-                    className="py-2 px-1.5 bg-blue-650 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-[9px] rounded-xl border-b-4 border-blue-900 flex flex-col items-center justify-center gap-1 cursor-pointer transition-all uppercase"
-                  >
-                    <span className="text-sm">🛸</span>
-                    <span>Send MOAB</span>
-                    <span className="text-[8px] text-yellow-300">-$300 (ECO +6.0)</span>
-                  </button>
+                <div className="flex flex-col sm:flex-row justify-between items-center border-b border-white/10 pb-2 gap-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+                    ⚔️ ECO RUSH OPPONENT (SEND BLOON WAVES TO GAIN INCOME & OVERWHELM DEFS)
+                  </span>
+                  <div className="flex items-center gap-1.5 text-[9px] text-white/50 bg-black/35 px-2.5 py-1 rounded-lg border border-white/5">
+                    <span>STATUS:</span>
+                    {autoSendBloon ? (
+                      <span className="text-emerald-400 font-extrabold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping" />
+                        AUTO STREAMING {autoSendBloon.toUpperCase()}
+                      </span>
+                    ) : (
+                      <span className="text-rose-400 font-bold">IDLE (CLICK 🔄 AUTO)</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-9 gap-1.5 w-full">
+                  {SENDABLE_BLOONS.map((b) => {
+                    const isLocked = round < b.unlockRound;
+                    const canAfford = cash >= b.cost;
+                    const isAutoActive = autoSendBloon === b.type;
+
+                    return (
+                      <div
+                        key={b.type}
+                        className={`relative rounded-xl border p-1 flex flex-col justify-between transition-all select-none ${
+                          isLocked 
+                            ? 'bg-slate-950/40 border-slate-900 opacity-50' 
+                            : isAutoActive
+                              ? 'bg-emerald-950/20 border-emerald-500 shadow-md ring-2 ring-emerald-500/20'
+                              : 'bg-slate-950/60 border-white/5 hover:border-white/10'
+                        }`}
+                      >
+                        {/* Single Send Action Group (Upper Part) */}
+                        <button
+                          disabled={isLocked || !canAfford}
+                          onClick={() => sendBloonToOpponent(b.type)}
+                          className={`w-full py-1 flex flex-col items-center justify-center gap-0.5 rounded-lg transition-all ${
+                            isLocked 
+                              ? 'cursor-not-allowed text-white/20' 
+                              : canAfford
+                                ? 'hover:bg-white/5 active:scale-95 cursor-pointer text-white'
+                                : 'opacity-40 cursor-not-allowed text-white'
+                          }`}
+                        >
+                          <span className="text-base">{b.emoji}</span>
+                          <span className="text-[9px] font-black tracking-tight leading-none">{b.type}</span>
+                          <span className={`text-[8px] font-extrabold ${isLocked ? 'text-slate-500' : 'text-yellow-400'}`}>
+                            {isLocked ? `R${b.unlockRound}` : `$${b.cost}`}
+                          </span>
+                        </button>
+
+                        {/* Auto-Send Toggle Button (Lower Part) */}
+                        {!isLocked ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAutoSendBloon(prev => prev === b.type ? null : b.type);
+                            }}
+                            className={`mt-1 py-0.5 font-sans font-black text-[7.5px] uppercase tracking-wider rounded-md border transition-all cursor-pointer text-center w-full block ${
+                              isAutoActive 
+                                ? 'bg-emerald-500 hover:bg-emerald-400 border-emerald-400 text-white font-extrabold' 
+                                : 'bg-slate-900 hover:bg-slate-800 border-white/5 text-slate-400'
+                            }`}
+                          >
+                            {isAutoActive ? 'ACTIVE' : 'AUTO 🔄'}
+                          </button>
+                        ) : (
+                          <div className="mt-1 py-0.5 text-center text-slate-600 text-[7px] font-mono tracking-wider bg-black/40 rounded-md border border-slate-900">
+                            🔒 R{b.unlockRound}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
