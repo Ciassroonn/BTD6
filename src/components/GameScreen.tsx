@@ -402,6 +402,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const battlesOpponentEcoRef = useRef<number>(250);
   const battlesOpponentCashRef = useRef<number>(650);
   const battlesOpponentLivesRef = useRef<number>(150);
+  const cashRef = useRef<number>(650);
+  const livesRef = useRef<number>(150);
 
   const battlesOpponentTowersRef = useRef<Tower[]>([]);
   const battlesOpponentBloonsRef = useRef<Bloon[]>([]);
@@ -443,6 +445,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   useEffect(() => { battlesOpponentEcoRef.current = battlesOpponentEco; }, [battlesOpponentEco]);
   useEffect(() => { battlesOpponentCashRef.current = battlesOpponentCash; }, [battlesOpponentCash]);
   useEffect(() => { battlesOpponentLivesRef.current = battlesOpponentLives; }, [battlesOpponentLives]);
+  useEffect(() => { cashRef.current = cash; }, [cash]);
+  useEffect(() => { livesRef.current = lives; }, [lives]);
 
   // Handle resizing accurately
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -496,6 +500,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     battlesOpponentSpawnQueueRef.current = [];
     battlesOpponentSpawnTimerRef.current = 0;
 
+    cashRef.current = 650;
+    livesRef.current = 150;
+    battlesEcoRef.current = 250;
+    battlesOpponentCashRef.current = 650;
+    battlesOpponentLivesRef.current = 150;
+    battlesOpponentEcoRef.current = 250;
+
     setRound(1);
     setRoundInProgress(false);
     setCash(650);
@@ -548,7 +559,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             setMpStatus('Opponent connected! Fight!');
           } else if (message.type === 'companion-disconnected') {
             setIsMultiplayerConnected(false);
-            setMpStatus('Opponent disconnected! Switched to AI fallback.');
+            setMpStatus('Opponent disconnected. Match paused.');
           } else {
             handleIncomingMpData(message);
           }
@@ -559,7 +570,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       ws.onerror = (err) => {
         console.error('WS Host Error:', err);
-        setMpStatus(`Connection error to ${wsUrl}. Playing offline with local AI opponent.`);
+        setMpStatus('Connection failed. Please check connection and try again.');
       };
 
       ws.onclose = () => {
@@ -628,7 +639,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             setMpStatus('Opponent connected! Fight!');
           } else if (message.type === 'companion-disconnected') {
             setIsMultiplayerConnected(false);
-            setMpStatus('Opponent disconnected! Switched to AI fallback.');
+            setMpStatus('Opponent disconnected. Match paused.');
           } else {
             handleIncomingMpData(message);
           }
@@ -639,7 +650,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       ws.onerror = (err) => {
         console.error('WS Guest Error:', err);
-        setMpStatus(`Connection error to ${wsUrl}. Playing offline with local AI opponent.`);
+        setMpStatus('Connection failed. Please check connection and try again.');
       };
 
       ws.onclose = () => {
@@ -715,49 +726,19 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     const ecoCost = bloonType === 'MOAB' ? 300 : bloonType === 'Ceramic' ? 150 : bloonType === 'Rainbow' ? 80 : bloonType === 'Yellow' ? 45 : 20;
     const ecoAdd = bloonType === 'MOAB' ? 6 : bloonType === 'Ceramic' ? 4.5 : bloonType === 'Rainbow' ? 2.5 : bloonType === 'Yellow' ? 1.5 : 1.0;
 
+    if (!isMultiplayerConnected) return;
+
     if (cash >= ecoCost) {
       setCash((c) => c - ecoCost);
       setBattlesEco((e) => e + ecoAdd);
 
-      if (isMultiplayerConnected && connRef.current) {
+      if (connRef.current) {
         connRef.current.send({
           type: 'send-bloon',
           bloonType: bloonType
         });
         // Queue the sent bloon locally for our simulated opponent board display so we can visualize it!
         battlesOpponentSpawnQueueRef.current.push({ delay: 5, type: bloonType });
-      } else {
-        // Offline / AI Battles: Simply queue it on the simulated opponent's side!
-        const bSpeed = bloonType === 'MOAB' ? 1.5 : bloonType === 'Ceramic' ? 2.5 : bloonType === 'Rainbow' ? 3.0 : bloonType === 'Yellow' ? 3.5 : 2.0;
-        const bHp = bloonType === 'MOAB' ? 200 : bloonType === 'Ceramic' ? 45 : bloonType === 'Rainbow' ? 12 : bloonType === 'Yellow' ? 4 : 1;
-        const bSize = bloonType === 'MOAB' ? 35 : bloonType === 'Ceramic' ? 22 : bloonType === 'Rainbow' ? 18 : bloonType === 'Yellow' ? 14 : 12;
-        const bReward = bloonType === 'MOAB' ? 60 : bloonType === 'Ceramic' ? 25 : bloonType === 'Rainbow' ? 10 : bloonType === 'Yellow' ? 4 : 1;
-        const bColor = bloonType === 'MOAB' ? '#38bdf8' : bloonType === 'Ceramic' ? '#a1a1aa' : bloonType === 'Rainbow' ? '#f472b6' : bloonType === 'Yellow' ? '#facc15' : '#ef4444';
-
-        const newBloon: Bloon = {
-          id: `opp_b_${Date.now()}_${Math.random()}`,
-          type: bloonType as any,
-          x: selectedMap.track[0].x,
-          y: selectedMap.track[0].y,
-          speed: bSpeed,
-          hp: bHp,
-          maxHp: bHp,
-          reward: bReward,
-          size: bSize,
-          color: bColor,
-          pathSegmentIndex: 0,
-          segmentProgress: 0,
-          distanceTraversed: 0,
-          isCamo: false,
-          isRegrow: false,
-          isFrozen: false,
-          isSlowed: false,
-          freezeTimer: 0,
-          slowTimer: 0,
-          isCeramic: bloonType === 'Ceramic',
-          isMoab: bloonType === 'MOAB'
-        };
-        battlesOpponentBloonsRef.current.push(newBloon);
       }
     }
   };
@@ -928,7 +909,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     if (gameModeRef.current === 'battles2' && mpRole === 'host' && isMultiplayerConnected && connRef.current) {
       connRef.current.send({
         type: 'start-round',
-        round: round
+        round: roundRef.current
       });
     }
   };
@@ -1454,7 +1435,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     connRef.current.send({
                       type: 'state',
                       lives: 0,
-                      cash: cash,
+                      cash: cashRef.current,
                       eco: battlesEcoRef.current
                     });
                   }
@@ -1465,7 +1446,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   connRef.current.send({
                     type: 'state',
                     lives: remaining,
-                    cash: cash,
+                    cash: cashRef.current,
                     eco: battlesEcoRef.current
                   });
                 }
@@ -2142,8 +2123,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             if (isMultiplayerConnected && connRef.current) {
               connRef.current.send({
                 type: 'state',
-                lives: lives,
-                cash: cash,
+                lives: livesRef.current,
+                cash: cashRef.current,
                 eco: battlesEcoRef.current
               });
             }
@@ -2286,77 +2267,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             }
           }
 
-          // F: AI Strategic Autonomic Decisions (if single player Battles)
-          if (!isMultiplayerConnected) {
-            // Build a tower
-            if (framesCounter > 0 && framesCounter % 420 === 0) {
-              const types: TowerType[] = ['dart', 'tack', 'sniper', 'bomb', 'ninja', 'wizard'];
-              const randSelected = types[Math.floor(Math.random() * types.length)];
-              const cost = TOWER_STATS[randSelected]?.cost || 300;
-
-              if (battlesOpponentCashRef.current >= cost) {
-                const trackSeg = selectedMap.track[Math.floor(selectedMap.track.length * 0.3 + Math.random() * selectedMap.track.length * 0.4)];
-                const ox = trackSeg.x + (Math.random() - 0.5) * 80;
-                const oy = trackSeg.y + (Math.random() - 0.5) * 80;
-
-                const dummy: Tower = {
-                  id: `opp_t_${Date.now()}_${Math.random()}`,
-                  type: randSelected,
-                  x: ox,
-                  y: oy,
-                  range: TOWER_STATS[randSelected]?.baseRange || 120,
-                  baseCooldown: TOWER_STATS[randSelected]?.baseCooldown || 50,
-                  cooldown: 0,
-                  damage: TOWER_STATS[randSelected]?.baseDamage || 1,
-                  pierce: TOWER_STATS[randSelected]?.basePierce || 2,
-                  cost: cost,
-                  popCount: 0,
-                  targetMode: 'First',
-                  level: 1,
-                  upgradeLevels: [0, 0, 0],
-                  upgradeIndex: 0,
-                  upgradesPurchased: 0
-                };
-
-                setBattlesOpponentCash((c) => {
-                  battlesOpponentCashRef.current = c - cost;
-                  return battlesOpponentCashRef.current;
-                });
-                battlesOpponentTowersRef.current.push(dummy);
-
-                battlesOpponentFloatingTextsRef.current.push({
-                  id: `opp_pl_${Date.now()}`,
-                  x: ox,
-                  y: oy - 15,
-                  text: randSelected.toUpperCase(),
-                  color: '#38bdf8',
-                  life: 40
-                });
-              }
-            }
-
-            // Launch a reverse strike rush at you!
-            if (framesCounter > 0 && framesCounter % 320 === 0) {
-              const oppEcoVal = battlesOpponentEcoRef.current;
-              const typeToSend = oppEcoVal > 550 ? 'MOAB' : oppEcoVal > 400 ? 'Ceramic' : oppEcoVal > 300 ? 'Rainbow' : oppEcoVal > 250 ? 'Yellow' : 'Blue';
-              const costEco = typeToSend === 'MOAB' ? 300 : typeToSend === 'Ceramic' ? 150 : typeToSend === 'Rainbow' ? 80 : typeToSend === 'Yellow' ? 45 : 20;
-              const ecoUpVal = typeToSend === 'MOAB' ? 6 : typeToSend === 'Ceramic' ? 4.5 : typeToSend === 'Rainbow' ? 2.5 : typeToSend === 'Yellow' ? 1.5 : 1.0;
-
-              if (battlesOpponentCashRef.current >= costEco) {
-                setBattlesOpponentCash((c) => {
-                  battlesOpponentCashRef.current = c - costEco;
-                  return battlesOpponentCashRef.current;
-                });
-                setBattlesOpponentEco((e) => {
-                  battlesOpponentEcoRef.current = e + ecoUpVal;
-                  return battlesOpponentEcoRef.current;
-                });
-
-                // Spawn on our player board!
-                spawnQueueRef.current.push({ delay: 5, type: typeToSend });
-              }
-            }
-          }
+          // F: AI Strategic Autonomic Decisions (Removed as requested)
 
           // G: Deaccelerate opponent floating texts and particles
           const oParts = battlesOpponentParticlesRef.current;
@@ -3485,8 +3396,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Live Connected ({mpRole})
                     </span>
                   ) : (
-                    <span className="text-[9px] bg-slate-800 text-slate-300 font-bold px-3 py-1 rounded-full border border-white/5 uppercase tracking-widest">
-                      🤖 Practice VS AI Fallback
+                    <span className="text-[9px] bg-amber-500/10 text-amber-400 font-bold px-3 py-1 rounded-full border border-amber-500/20 uppercase tracking-widest animate-pulse flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Waiting for Connection
                     </span>
                   )}
                 </div>
@@ -3537,7 +3448,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                           Join PIN
                         </button>
                       </div>
-                      <span className="text-[9px] text-white/40 text-center">If no Room PIN is connected, you can play right away against our simulated smart AI opponent!</span>
+                      <span className="text-[9px] text-white/40 text-center">Standard multiplayer matches require connection. Enter a friend's PIN to fight!</span>
                     </div>
                   </div>
                 ) : (
@@ -3548,7 +3459,20 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               </div>
 
               {/* DUAL SCREEN ARENAS DISPLAY */}
-              <div className="flex flex-col lg:flex-row gap-5 w-full justify-center items-center">
+              <div className="flex flex-col lg:flex-row gap-5 w-full justify-center items-center relative">
+                {!isMultiplayerConnected && (
+                  <div className="absolute inset-0 z-40 bg-slate-950/85 backdrop-blur-md rounded-2xl flex flex-col items-center justify-center text-center p-6 border border-white/10 gap-3">
+                    <div className="w-16 h-16 bg-cyan-500/10 border border-cyan-500/30 rounded-2xl flex items-center justify-center text-3xl animate-bounce mb-1 text-cyan-400">
+                      📡
+                    </div>
+                    <h3 className="text-sm font-black uppercase text-cyan-400 tracking-wider">
+                      Waiting for both players to enter room
+                    </h3>
+                    <p className="text-white/60 text-xs max-w-md leading-relaxed">
+                      Please Host an Online Room and share your Peer PIN, or enter your friend's Peer PIN and click Join! Game starting synchronization triggers automatically once both players enter the lobby.
+                    </p>
+                  </div>
+                )}
                 {/* YOUR SCREEN */}
                 <div className="flex flex-col gap-1.5 items-center w-full max-w-[480px]">
                   <div className="w-full flex justify-between items-center bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-emerald-400">
