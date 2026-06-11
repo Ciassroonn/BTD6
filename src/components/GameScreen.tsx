@@ -397,6 +397,42 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const [isMultiplayerConnected, setIsMultiplayerConnected] = useState<boolean>(false);
   const [mpRole, setMpRole] = useState<'host' | 'client' | null>(null);
   const [mpStatus, setMpStatus] = useState<string>('');
+  
+  const [customServerUrl, setCustomServerUrl] = useState<string>('');
+  const [showServerSettings, setShowServerSettings] = useState<boolean>(false);
+
+  const getMpServerUrl = (): string => {
+    if (customServerUrl.trim()) {
+      return customServerUrl.trim();
+    }
+    
+    let host = 'localhost:3000';
+    try {
+      host = window.location.host || window.location.hostname + (window.location.port ? ':' + window.location.port : '');
+    } catch (err) {
+      console.warn('Iframe blocked window.location.host access, using fallback.');
+    }
+
+    const isLocal = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('0.0.0.0');
+    const isPreview = host.includes('run.app');
+
+    if (!isLocal && !isPreview) {
+      return 'wss://ais-pre-7dufymqhvbwim43rqg4h27-707267944988.us-east1.run.app/ws';
+    }
+
+    let builtInAppUrl = '';
+    try {
+      builtInAppUrl = (process.env as any).APP_URL || '';
+    } catch (err) {}
+
+    if (builtInAppUrl && !isLocal) {
+      const cleanUrl = builtInAppUrl.replace(/^http/, 'ws');
+      return cleanUrl.endsWith('/') ? `${cleanUrl}ws` : `${cleanUrl}/ws`;
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${host || 'localhost:3000'}/ws`;
+    }
+  };
 
   const battlesEcoRef = useRef<number>(250);
   const battlesOpponentEcoRef = useRef<number>(250);
@@ -526,26 +562,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       setBattlesPeerId(pin);
       setMpRole('host');
       
-      let wsUrl = '';
-      let builtInAppUrl = '';
-      try {
-        builtInAppUrl = (process.env as any).APP_URL || '';
-      } catch (err) {}
-
-      let host = 'localhost:3000';
-      try {
-        host = window.location.host || window.location.hostname + (window.location.port ? ':' + window.location.port : '');
-      } catch (err) {
-        console.warn('Iframe blocked window.location.host access, using fallback.');
-      }
-
-      if (builtInAppUrl && !host.includes('localhost') && !host.includes('127.0.0.1')) {
-        const cleanUrl = builtInAppUrl.replace(/^http/, 'ws');
-        wsUrl = cleanUrl.endsWith('/') ? `${cleanUrl}ws` : `${cleanUrl}/ws`;
-      } else {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsUrl = `${protocol}//${host || 'localhost:3000'}/ws`;
-      }
+      const wsUrl = getMpServerUrl();
       
       setMpStatus(`Connecting to multiplayer server via ${wsUrl}...`);
       const ws = new WebSocket(wsUrl);
@@ -618,26 +635,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       setMpRole('client');
       setMpStatus('Connecting to multiplayer server...');
 
-      let wsUrl = '';
-      let builtInAppUrl = '';
-      try {
-        builtInAppUrl = (process.env as any).APP_URL || '';
-      } catch (err) {}
-
-      let host = 'localhost:3000';
-      try {
-        host = window.location.host || window.location.hostname + (window.location.port ? ':' + window.location.port : '');
-      } catch (err) {
-        console.warn('Iframe blocked window.location.host access, using fallback.');
-      }
-
-      if (builtInAppUrl && !host.includes('localhost') && !host.includes('127.0.0.1')) {
-        const cleanUrl = builtInAppUrl.replace(/^http/, 'ws');
-        wsUrl = cleanUrl.endsWith('/') ? `${cleanUrl}ws` : `${cleanUrl}/ws`;
-      } else {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsUrl = `${protocol}//${host || 'localhost:3000'}/ws`;
-      }
+      const wsUrl = getMpServerUrl();
 
       setMpStatus(`Joining Room ${pin} via ${wsUrl}...`);
       const ws = new WebSocket(wsUrl);
@@ -3431,6 +3429,47 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     🌐 Status: {mpStatus}
                   </div>
                 )}
+
+                {/* Advanced Server Settings section */}
+                <div className="bg-black/25 rounded-xl border border-white/5 p-2 px-3 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-white/50 uppercase font-black tracking-wider flex items-center gap-1">
+                      📡 Server Endpoint: <span className="text-cyan-400 font-mono text-[9px] lowercase font-normal">{getMpServerUrl()}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowServerSettings(!showServerSettings)}
+                      className="text-[9px] text-cyan-400 hover:text-cyan-300 underline uppercase tracking-wider font-bold bg-transparent border-0 cursor-pointer"
+                    >
+                      {showServerSettings ? 'Hide Config' : 'Configure Server'}
+                    </button>
+                  </div>
+                  {showServerSettings && (
+                    <div className="flex flex-col gap-1.5 mt-1 border-t border-white/5 pt-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="e.g. wss://your-server.com/ws"
+                          value={customServerUrl}
+                          onChange={(e) => setCustomServerUrl(e.target.value)}
+                          className="flex-1 bg-slate-950 border border-white/10 px-2.5 py-1 rounded text-white text-[11px] font-mono focus:outline-none focus:border-cyan-500"
+                        />
+                        {customServerUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setCustomServerUrl('')}
+                            className="px-2 py-1 bg-rose-950/40 hover:bg-rose-900/40 border border-rose-500/30 text-rose-400 text-[10px] rounded uppercase font-bold"
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                      <span className="text-[9px] text-white/40 leading-relaxed">
+                        Default fallback is auto-routed to our active cloud container on <code>run.app</code> when played from static domains such as GitHub Pages. Enter a secure WebSockets URL above to override server routing.
+                      </span>
+                    </div>
+                  )}
+                </div>
 
                 {!isMultiplayerConnected ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs relative z-30">
