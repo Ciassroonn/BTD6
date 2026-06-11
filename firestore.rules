@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Catch-all default deny for any unexpected paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Battles rooms collection rule
+    match /battles_rooms/{roomId} {
+      // Allow any user to read, create or update a room to support host/join matchmaking
+      allow get: if true;
+      allow create: if true;
+      allow update: if true;
+      allow list: if false;
+
+      // Real-time synchronization events subcollection
+      match /events/{eventId} {
+        // Allow readers and writers to securely emit and receive gameplay events
+        allow read: if true;
+        allow write: if true;
+      }
+    }
+  }
+}

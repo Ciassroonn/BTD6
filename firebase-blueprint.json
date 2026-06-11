@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "Room": {
+      "title": "BattlesRoom",
+      "description": "A multiplayer game room for Bloons Battles PvP",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "hostSessionId": { "type": "string" },
+        "clientSessionId": { "type": "string" },
+        "status": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["roomId", "status", "updatedAt"]
+    },
+    "GameEvent": {
+      "title": "GameEvent",
+      "description": "A real-time synchronization action event between host and client",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sender": { "type": "string" },
+        "type": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "payload": { "type": "object" }
+      },
+      "required": ["sender", "type", "timestamp", "payload"]
+    }
+  },
+  "firestore": {
+    "/battles_rooms/{roomId}": {
+      "schema": "Room",
+      "description": "Active multiplayer room documents"
+    },
+    "/battles_rooms/{roomId}/events/{eventId}": {
+      "schema": "GameEvent",
+      "description": "Real-time action events emitted by players in the room"
+    }
+  }
+}

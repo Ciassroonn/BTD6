@@ -48,6 +48,19 @@ import {
   Check,
 } from 'lucide-react';
 
+import { db } from '../firebase';
+import {
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  onSnapshot,
+  query,
+  orderBy,
+} from 'firebase/firestore';
+
 export const TOWER_VISUALS: Record<string, { emoji: string; color: string; tag: string }> = {
   dart: { emoji: '🐒', color: '#b45309', tag: 'Primary Popper' },
   tack: { emoji: '⚙️', color: '#6b7280', tag: '360° Burst' },
@@ -434,6 +447,204 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     }
   };
 
+  const [mpEngine, setMpEngine] = useState<'firebase' | 'websocket'>('firebase');
+  const sessionIdRef = useRef<string>(Math.random().toString(36).substring(2, 9));
+
+  const handleFirestoreError = (error: unknown, operationType: string, path: string | null) => {
+    const errInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      operationType,
+      path,
+      authInfo: {
+        userId: null,
+        email: null,
+      }
+    };
+    console.error('Firestore Error:', JSON.stringify(errInfo));
+    throw new Error(JSON.stringify(errInfo));
+  };
+
+  const startBattlesFirebaseHost = async () => {
+    try {
+      const pin = Math.floor(100000 + Math.random() * 900000).toString();
+      setBattlesPeerId(pin);
+      setMpRole('host');
+      setMpStatus('Creating real-time room in Firestore...');
+
+      const roomRef = doc(db, 'battles_rooms', pin);
+      
+      await setDoc(roomRef, {
+        roomId: pin,
+        hostSessionId: sessionIdRef.current,
+        clientSessionId: '',
+        status: 'waiting',
+        updatedAt: Date.now()
+      });
+
+      console.log('Firebase room created, PIN:', pin);
+      setMpStatus('Waiting for your opponent to join...');
+
+      const unsubscribeRoom = onSnapshot(roomRef, (snapshot) => {
+        if (!snapshot.exists()) return;
+        const data = snapshot.data();
+        if (data.status === 'connected' && data.clientSessionId) {
+          resetBattlesMatch();
+          setIsMultiplayerConnected(true);
+          setMpStatus('Opponent connected! Fight!');
+        } else if (data.status === 'disconnected') {
+          setIsMultiplayerConnected(false);
+          setMpStatus('Opponent disconnected. Match paused.');
+        }
+      }, (error) => {
+        handleFirestoreError(error, 'get', `battles_rooms/${pin}`);
+      });
+
+      const eventsRef = collection(db, 'battles_rooms', pin, 'events');
+      const q = query(eventsRef, orderBy('timestamp', 'asc'));
+      
+      let lastProcessedTimestamp = Date.now();
+
+      const unsubscribeEvents = onSnapshot(q, (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const eventDoc = change.doc.data();
+            if (eventDoc.sender === 'client' && eventDoc.timestamp > lastProcessedTimestamp) {
+              handleIncomingMpData(eventDoc);
+            }
+          }
+        });
+      }, (error) => {
+        handleFirestoreError(error, 'list', `battles_rooms/${pin}/events`);
+      });
+
+      connRef.current = {
+        send: async (data: any) => {
+          try {
+            await addDoc(eventsRef, {
+              sender: 'host',
+              timestamp: Date.now(),
+              ...data
+            });
+          } catch (error) {
+            handleFirestoreError(error, 'write', `battles_rooms/${pin}/events`);
+          }
+        },
+        close: async () => {
+          try {
+            unsubscribeRoom();
+            unsubscribeEvents();
+            await updateDoc(roomRef, {
+              status: 'disconnected',
+              updatedAt: Date.now()
+            });
+          } catch (e) {
+            console.warn('Silent close error:', e);
+          }
+        }
+      };
+
+    } catch (error) {
+      console.error('Failed to host Firebase Battles Room:', error);
+      setMpStatus('Error creating Firebase Room. Try again.');
+    }
+  };
+
+  const joinBattlesFirebaseRoom = async (code: string) => {
+    const pin = code.trim();
+    if (!pin) {
+      setMpStatus('Please enter a valid PIN.');
+      return;
+    }
+
+    try {
+      setMpRole('client');
+      setMpStatus(`Joining room ${pin} in Firestore...`);
+
+      const roomRef = doc(db, 'battles_rooms', pin);
+      const roomSnap = await getDoc(roomRef);
+
+      if (!roomSnap.exists()) {
+        setMpStatus('Room does not exist. Double check the PIN!');
+        return;
+      }
+
+      const roomData = roomSnap.data();
+      if (roomData.status === 'connected') {
+        setMpStatus('Room is already full!');
+        return;
+      }
+
+      await updateDoc(roomRef, {
+        clientSessionId: sessionIdRef.current,
+        status: 'connected',
+        updatedAt: Date.now()
+      });
+
+      const unsubscribeRoom = onSnapshot(roomRef, (snapshot) => {
+        if (!snapshot.exists()) return;
+        const data = snapshot.data();
+        if (data.status === 'disconnected') {
+          setIsMultiplayerConnected(false);
+          setMpStatus('Disconnected by peer.');
+        }
+      }, (error) => {
+        handleFirestoreError(error, 'get', `battles_rooms/${pin}`);
+      });
+
+      const eventsRef = collection(db, 'battles_rooms', pin, 'events');
+      const q = query(eventsRef, orderBy('timestamp', 'asc'));
+      
+      let lastProcessedTimestamp = Date.now();
+
+      const unsubscribeEvents = onSnapshot(q, (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const eventDoc = change.doc.data();
+            if (eventDoc.sender === 'host' && eventDoc.timestamp > lastProcessedTimestamp) {
+              handleIncomingMpData(eventDoc);
+            }
+          }
+        });
+      }, (error) => {
+        handleFirestoreError(error, 'list', `battles_rooms/${pin}/events`);
+      });
+
+      resetBattlesMatch();
+      setIsMultiplayerConnected(true);
+      setMpStatus('Loaded in! Connected with host, Fight!');
+
+      connRef.current = {
+        send: async (data: any) => {
+          try {
+            await addDoc(eventsRef, {
+              sender: 'client',
+              timestamp: Date.now(),
+              ...data
+            });
+          } catch (error) {
+            handleFirestoreError(error, 'write', `battles_rooms/${pin}/events`);
+          }
+        },
+        close: async () => {
+          try {
+            unsubscribeRoom();
+            unsubscribeEvents();
+            await updateDoc(roomRef, {
+              status: 'disconnected',
+              updatedAt: Date.now()
+            });
+          } catch (e) {
+            console.warn('Silent close error:', e);
+          }
+        }
+      };
+
+    } catch (error) {
+      console.error('Failed to join Firebase Battles Room:', error);
+      setMpStatus('Error joining room. Try again.');
+    }
+  };
+
   const battlesEcoRef = useRef<number>(250);
   const battlesOpponentEcoRef = useRef<number>(250);
   const battlesOpponentCashRef = useRef<number>(650);
@@ -557,6 +768,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   const startBattlesHost = () => {
     console.log("startBattlesHost clicked!");
+    if (mpEngine === 'firebase') {
+      startBattlesFirebaseHost();
+      return;
+    }
     try {
       const pin = Math.floor(100000 + Math.random() * 900005).toString(); // 6 digit PIN
       setBattlesPeerId(pin);
@@ -626,6 +841,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   const joinBattlesRoom = (code: string) => {
     console.log("joinBattlesRoom clicked with PIN:", code);
+    if (mpEngine === 'firebase') {
+      joinBattlesFirebaseRoom(code);
+      return;
+    }
     try {
       const pin = code.trim();
       if (!pin) {
@@ -3430,46 +3649,89 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   </div>
                 )}
 
-                {/* Advanced Server Settings section */}
+                {/* Connection Engine Selector */}
                 <div className="bg-black/25 rounded-xl border border-white/5 p-2 px-3 flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-white/50 uppercase font-black tracking-wider flex items-center gap-1">
-                      📡 Server Endpoint: <span className="text-cyan-400 font-mono text-[9px] lowercase font-normal">{getMpServerUrl()}</span>
-                    </span>
+                  <span className="text-[10px] text-white/50 uppercase font-black tracking-wider block">🌍 Server Sync Engine:</span>
+                  <div className="flex gap-1.5 p-1 bg-black/40 rounded-lg border border-white/5">
                     <button
                       type="button"
-                      onClick={() => setShowServerSettings(!showServerSettings)}
-                      className="text-[9px] text-cyan-400 hover:text-cyan-300 underline uppercase tracking-wider font-bold bg-transparent border-0 cursor-pointer"
+                      onClick={() => {
+                        setMpEngine('firebase');
+                        setMpStatus('');
+                      }}
+                      className={`flex-1 py-1 px-3 rounded text-[11px] font-black uppercase tracking-wider transition-all duration-150 cursor-pointer ${
+                        mpEngine === 'firebase'
+                          ? 'bg-cyan-500/25 text-cyan-400 border border-cyan-500/35 font-extrabold'
+                          : 'text-white/40 border border-transparent hover:text-white/70 font-semibold'
+                      }`}
                     >
-                      {showServerSettings ? 'Hide Config' : 'Configure Server'}
+                      🔥 Firebase Realtime Engine
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMpEngine('websocket');
+                        setMpStatus('');
+                      }}
+                      className={`flex-1 py-1 px-3 rounded text-[11px] font-black uppercase tracking-wider transition-all duration-150 cursor-pointer ${
+                        mpEngine === 'websocket'
+                          ? 'bg-cyan-500/25 text-cyan-400 border border-cyan-500/35 font-extrabold'
+                          : 'text-white/40 border border-transparent hover:text-white/70 font-semibold'
+                      }`}
+                    >
+                      📡 WebSockets Engine
                     </button>
                   </div>
-                  {showServerSettings && (
-                    <div className="flex flex-col gap-1.5 mt-1 border-t border-white/5 pt-2">
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="e.g. wss://your-server.com/ws"
-                          value={customServerUrl}
-                          onChange={(e) => setCustomServerUrl(e.target.value)}
-                          className="flex-1 bg-slate-950 border border-white/10 px-2.5 py-1 rounded text-white text-[11px] font-mono focus:outline-none focus:border-cyan-500"
-                        />
-                        {customServerUrl && (
-                          <button
-                            type="button"
-                            onClick={() => setCustomServerUrl('')}
-                            className="px-2 py-1 bg-rose-950/40 hover:bg-rose-900/40 border border-rose-500/30 text-rose-400 text-[10px] rounded uppercase font-bold"
-                          >
-                            Reset
-                          </button>
-                        )}
-                      </div>
-                      <span className="text-[9px] text-white/40 leading-relaxed">
-                        Default fallback is auto-routed to our active cloud container on <code>run.app</code> when played from static domains such as GitHub Pages. Enter a secure WebSockets URL above to override server routing.
-                      </span>
-                    </div>
-                  )}
+                  <span className="text-[9px] text-white/45 leading-normal">
+                    {mpEngine === 'firebase' 
+                      ? "⚡ Highly Recommended: Firebase Firestore handles real-time streams across any domain limit (like GitHub Pages or rigid firewalls)."
+                      : "🧑‍💻 Developer Option: Localhost:3000 WebSockets. Requires setting up custom secure WebSocket URL if serving from static providers."
+                    }
+                  </span>
                 </div>
+
+                {/* Advanced Server Settings section (WebSockets only) */}
+                {mpEngine === 'websocket' && (
+                  <div className="bg-black/25 rounded-xl border border-white/5 p-2 px-3 flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-white/50 uppercase font-black tracking-wider flex items-center gap-1">
+                        📡 Server Endpoint: <span className="text-cyan-400 font-mono text-[9px] lowercase font-normal">{getMpServerUrl()}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowServerSettings(!showServerSettings)}
+                        className="text-[9px] text-cyan-400 hover:text-cyan-300 underline uppercase tracking-wider font-bold bg-transparent border-0 cursor-pointer"
+                      >
+                        {showServerSettings ? 'Hide Config' : 'Configure Server'}
+                      </button>
+                    </div>
+                    {showServerSettings && (
+                      <div className="flex flex-col gap-1.5 mt-1 border-t border-white/5 pt-2">
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="e.g. wss://your-server.com/ws"
+                            value={customServerUrl}
+                            onChange={(e) => setCustomServerUrl(e.target.value)}
+                            className="flex-1 bg-slate-950 border border-white/10 px-2.5 py-1 rounded text-white text-[11px] font-mono focus:outline-none focus:border-cyan-500"
+                          />
+                          {customServerUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setCustomServerUrl('')}
+                              className="px-2 py-1 bg-rose-950/40 hover:bg-rose-900/40 border border-rose-500/30 text-rose-400 text-[10px] rounded uppercase font-bold"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                        <span className="text-[9px] text-white/40 leading-relaxed">
+                          Default fallback is auto-routed to our active cloud container on <code>run.app</code> when played from static domains such as GitHub Pages. Enter a secure WebSockets URL above to override server routing.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {!isMultiplayerConnected ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs relative z-30">
