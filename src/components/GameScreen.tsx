@@ -383,6 +383,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const spawnTimerRef = useRef<number>(0);
   const roundInProgressRef = useRef<boolean>(false);
 
+  const battlesOpponentSpawnQueueRef = useRef<{ delay: number; type: string }[]>([]);
+  const battlesOpponentSpawnTimerRef = useRef<number>(0);
+
   // --- BATTLES 2 STATE & REFS ---
   const [battlesEco, setBattlesEco] = useState<number>(250);
   const [battlesOpponentEco, setBattlesOpponentEco] = useState<number>(250);
@@ -475,6 +478,36 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   }, []);
 
   // --- BATTLES 2 MP HELPERS ---
+  const resetBattlesMatch = () => {
+    towersRef.current = [];
+    bloonsRef.current = [];
+    projectilesRef.current = [];
+    particlesRef.current = [];
+    floatingTextsRef.current = [];
+    spawnQueueRef.current = [];
+    spawnTimerRef.current = 0;
+    roundInProgressRef.current = false;
+
+    battlesOpponentTowersRef.current = [];
+    battlesOpponentBloonsRef.current = [];
+    battlesOpponentProjectilesRef.current = [];
+    battlesOpponentParticlesRef.current = [];
+    battlesOpponentFloatingTextsRef.current = [];
+    battlesOpponentSpawnQueueRef.current = [];
+    battlesOpponentSpawnTimerRef.current = 0;
+
+    setRound(1);
+    setRoundInProgress(false);
+    setCash(650);
+    setLives(150);
+    setBattlesEco(250);
+
+    setBattlesOpponentCash(650);
+    setBattlesOpponentLives(150);
+    setBattlesOpponentEco(250);
+    setTriggerPopCountUpdate((prev) => prev + 1);
+  };
+
   const startBattlesHost = () => {
     console.log("startBattlesHost clicked!");
     try {
@@ -510,6 +543,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             setMpStatus('Waiting for your opponent to join...');
             console.log('WebSocket Host setup complete, PIN:', pin);
           } else if (message.type === 'companion-connected') {
+            resetBattlesMatch();
             setIsMultiplayerConnected(true);
             setMpStatus('Opponent connected! Fight!');
           } else if (message.type === 'companion-disconnected') {
@@ -589,6 +623,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             setMpStatus('Successfully joined! Waiting for host to load game...');
             console.log('WebSocket Client successfully joined room:', pin);
           } else if (message.type === 'companion-connected') {
+            resetBattlesMatch();
             setIsMultiplayerConnected(true);
             setMpStatus('Opponent connected! Fight!');
           } else if (message.type === 'companion-disconnected') {
@@ -648,6 +683,24 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     } else if (data.type === 'send-bloon') {
       // Spawn sent bloon at our spawning queue
       spawnQueueRef.current.push({ delay: 5, type: data.bloonType });
+    } else if (data.type === 'start-round') {
+      console.log('Client received synchronized start-round from host:', data.round);
+      setRound(data.round);
+      roundRef.current = data.round;
+
+      // Clear in-flight projectiles and setup clean arrays
+      projectilesRef.current = [];
+      battlesOpponentProjectilesRef.current = [];
+
+      const seq = generateWave(data.round);
+      spawnQueueRef.current = [...seq];
+      spawnTimerRef.current = 0;
+
+      battlesOpponentSpawnQueueRef.current = [...seq];
+      battlesOpponentSpawnTimerRef.current = 0;
+
+      roundInProgressRef.current = true;
+      setRoundInProgress(true);
     } else if (data.type === 'state') {
       setBattlesOpponentLives(data.lives);
       setBattlesOpponentCash(data.cash);
@@ -671,6 +724,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           type: 'send-bloon',
           bloonType: bloonType
         });
+        // Queue the sent bloon locally for our simulated opponent board display so we can visualize it!
+        battlesOpponentSpawnQueueRef.current.push({ delay: 5, type: bloonType });
       } else {
         // Offline / AI Battles: Simply queue it on the simulated opponent's side!
         const bSpeed = bloonType === 'MOAB' ? 1.5 : bloonType === 'Ceramic' ? 2.5 : bloonType === 'Rainbow' ? 3.0 : bloonType === 'Yellow' ? 3.5 : 2.0;
@@ -859,11 +914,23 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
     // Compile spawn sequences procedurally mimicking real rounds
     const seq = generateWave(round);
-    spawnQueueRef.current = seq;
+    spawnQueueRef.current = [...seq];
     spawnTimerRef.current = 0;
+
+    if (gameModeRef.current === 'battles2') {
+      battlesOpponentSpawnQueueRef.current = [...seq];
+      battlesOpponentSpawnTimerRef.current = 0;
+    }
 
     roundInProgressRef.current = true;
     setRoundInProgress(true);
+
+    if (gameModeRef.current === 'battles2' && mpRole === 'host' && isMultiplayerConnected && connRef.current) {
+      connRef.current.send({
+        type: 'start-round',
+        round: round
+      });
+    }
   };
 
   // Place a Monkey
@@ -941,6 +1008,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current) return;
+    if (gameModeRef.current === 'battles2' && !isMultiplayerConnected) {
+      console.log('Interaction blocked: Waiting for opponent...');
+      return;
+    }
     const rect = canvasRef.current.getBoundingClientRect();
     const cx = ((e.clientX - rect.left) / rect.width) * 1000;
     const cy = ((e.clientY - rect.top) / rect.height) * 1000;
@@ -1378,7 +1449,25 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   setIsGameOverOrFinished(true);
                   assessAchievementProgress('round_40', roundRef.current); // track round max on fail as progress
                   onGameOver(roundRef.current - 1, Math.min(600, roundRef.current * 12), totalPopCount);
+                  
+                  if (gameModeRef.current === 'battles2' && isMultiplayerConnected && connRef.current) {
+                    connRef.current.send({
+                      type: 'state',
+                      lives: 0,
+                      cash: cash,
+                      eco: battlesEcoRef.current
+                    });
+                  }
                   return 0;
+                }
+
+                if (gameModeRef.current === 'battles2' && isMultiplayerConnected && connRef.current) {
+                  connRef.current.send({
+                    type: 'state',
+                    lives: remaining,
+                    cash: cash,
+                    eco: battlesEcoRef.current
+                  });
                 }
                 return remaining;
               });
@@ -1978,8 +2067,50 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         // --- BATTLES 2 IN-FLIGHT SIMULATION ---
         if (gameModeRef.current === 'battles2' && !isGameOverOrFinishedRef.current) {
           // A: Spawning Opponent Queue entries
-          if (battlesOpponentBloonsRef.current.length < 40) { // Limit max bloons on screen for clean performance
-            // We can spawn any queued AI or partner bloons
+          if (battlesOpponentSpawnQueueRef.current.length > 0) {
+            battlesOpponentSpawnTimerRef.current -= 1;
+            if (battlesOpponentSpawnTimerRef.current <= 0) {
+              const item = battlesOpponentSpawnQueueRef.current.shift();
+              if (item) {
+                const spec = getBloonStyle(item.type as any);
+                const pathStart = selectedMap.track[0];
+
+                let speedMultiplierByDiff = 1.0;
+                if (difficulty === 'Easy') speedMultiplierByDiff = 0.85;
+                else if (difficulty === 'Hard' || difficulty === 'CHIMPS') speedMultiplierByDiff = 1.15;
+
+                const lateScale = getLateGameMultiplier(roundRef.current);
+                const initialHp = (item.isFortified ? (item.type === 'Lead' ? spec.hp * 4 : spec.hp * 2) : spec.hp) * lateScale.hp;
+
+                const inst: Bloon = {
+                  id: `opp_b_${Date.now()}_${Math.random()}`,
+                  type: item.type as any,
+                  x: pathStart.x,
+                  y: pathStart.y,
+                  speed: spec.speed * speedMultiplierByDiff * lateScale.speed,
+                  hp: initialHp,
+                  maxHp: initialHp,
+                  size: spec.size,
+                  color: spec.color,
+                  reward: spec.reward,
+                  distanceTraversed: 0,
+                  pathSegmentIndex: 0,
+                  segmentProgress: 0,
+                  isFrozen: false,
+                  freezeTimer: 0,
+                  isSlowed: false,
+                  slowTimer: 0,
+                  isCeramic: item.type === 'Ceramic',
+                  isMoab: ['MOAB', 'BFB', 'ZOMG', 'DDT', 'BAD'].includes(item.type),
+                  isCamo: item.isCamo,
+                  isRegrow: item.isRegrow,
+                  isFortified: item.isFortified,
+                };
+
+                battlesOpponentBloonsRef.current.push(inst);
+                battlesOpponentSpawnTimerRef.current = item.delay;
+              }
+            }
           }
 
           // B: Eco payouts (every 360 frames)
@@ -2390,6 +2521,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   // Autoplay handler to fix the "autoplay doesn't work" bug
   useEffect(() => {
     if (autoPlay && !roundInProgress && !isGameOverOrFinished && !showVictoryModal) {
+      // Battles mode matchmaking gates: do not start any automatic wave until both players connect!
+      if (gameModeRef.current === 'battles2') {
+        if (!isMultiplayerConnected) {
+          console.log('Battles mode: Waiting for both players to connect before starting automatic waves.');
+          return;
+        }
+        if (mpRole === 'client') {
+          console.log('Battles client: Waiting for Host start-round message.');
+          return;
+        }
+      }
+
       // Small 1.2 second delay represents natural round completion grace pacing
       const timer = setTimeout(() => {
         if (!roundInProgress && !isGameOverOrFinished && !showVictoryModal) {
@@ -2398,7 +2541,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       }, 1200);
       return () => clearTimeout(timer);
     }
-  }, [autoPlay, roundInProgress, isGameOverOrFinished, round, showVictoryModal]);
+  }, [autoPlay, roundInProgress, isGameOverOrFinished, round, showVictoryModal, isMultiplayerConnected, mpRole]);
 
   // Target matching routing helper inside painting tick
   const findActiveTargetForTower = (t: Tower): Bloon | undefined => {
@@ -3362,7 +3505,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                         id="btn-host-online-room"
                         type="button"
                         onClick={startBattlesHost}
-                        className="py-2.5 px-4 bg-cyan-65 border-b-4 border-cyan-800 hover:bg-cyan-550 text-white font-black rounded-lg transition-all text-center cursor-pointer uppercase text-xs shadow-md"
+                        className="py-2.5 px-4 bg-cyan-600 border-b-4 border-cyan-800 hover:bg-cyan-500 active:translate-y-0.5 text-white font-black rounded-lg transition-all text-center cursor-pointer uppercase text-xs shadow-md"
                       >
                         🌐 Host Online Room
                       </button>
@@ -3389,7 +3532,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                           id="btn-join-battles-room"
                           type="button"
                           onClick={() => joinBattlesRoom(battlesJoinCode)}
-                          className="py-2.5 px-3 bg-emerald-650 border-b-4 border-emerald-800 hover:bg-emerald-555 text-white font-black rounded-lg transition-all cursor-pointer uppercase text-xs shadow-md"
+                          className="py-2.5 px-3 bg-emerald-600 border-b-4 border-emerald-800 hover:bg-emerald-500 active:translate-y-0.5 text-white font-black rounded-lg transition-all cursor-pointer uppercase text-xs shadow-md"
                         >
                           Join PIN
                         </button>
