@@ -526,14 +526,26 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       setBattlesPeerId(pin);
       setMpRole('host');
       
+      let wsUrl = '';
+      let builtInAppUrl = '';
+      try {
+        builtInAppUrl = (process.env as any).APP_URL || '';
+      } catch (err) {}
+
       let host = 'localhost:3000';
       try {
         host = window.location.host || window.location.hostname + (window.location.port ? ':' + window.location.port : '');
       } catch (err) {
         console.warn('Iframe blocked window.location.host access, using fallback.');
       }
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${host || 'localhost:3000'}/ws`;
+
+      if (builtInAppUrl && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+        const cleanUrl = builtInAppUrl.replace(/^http/, 'ws');
+        wsUrl = cleanUrl.endsWith('/') ? `${cleanUrl}ws` : `${cleanUrl}/ws`;
+      } else {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = `${protocol}//${host || 'localhost:3000'}/ws`;
+      }
       
       setMpStatus(`Connecting to multiplayer server via ${wsUrl}...`);
       const ws = new WebSocket(wsUrl);
@@ -606,14 +618,26 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       setMpRole('client');
       setMpStatus('Connecting to multiplayer server...');
 
+      let wsUrl = '';
+      let builtInAppUrl = '';
+      try {
+        builtInAppUrl = (process.env as any).APP_URL || '';
+      } catch (err) {}
+
       let host = 'localhost:3000';
       try {
         host = window.location.host || window.location.hostname + (window.location.port ? ':' + window.location.port : '');
       } catch (err) {
         console.warn('Iframe blocked window.location.host access, using fallback.');
       }
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${host || 'localhost:3000'}/ws`;
+
+      if (builtInAppUrl && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+        const cleanUrl = builtInAppUrl.replace(/^http/, 'ws');
+        wsUrl = cleanUrl.endsWith('/') ? `${cleanUrl}ws` : `${cleanUrl}/ws`;
+      } else {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = `${protocol}//${host || 'localhost:3000'}/ws`;
+      }
 
       setMpStatus(`Joining Room ${pin} via ${wsUrl}...`);
       const ws = new WebSocket(wsUrl);
