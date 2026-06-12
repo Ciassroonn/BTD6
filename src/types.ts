@@ -78,6 +78,8 @@ export interface Tower {
   heroXp?: number; // for heroes
   heroMaxXp?: number;
   lastAngle?: number;
+  abilityCooldown?: number;
+  abilityActiveTimer?: number;
 }
 
 export interface Projectile {

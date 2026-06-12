@@ -1036,7 +1036,391 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       setOpponentSpeedVote(data.speed);
     } else if (data.type === 'pause-vote') {
       setOpponentPauseVote(data.paused);
+    } else if (data.type === 'activate-ability') {
+      const t = battlesOpponentTowersRef.current.find((x) => x.id === data.towerId);
+      if (t) {
+        t.abilityCooldown = data.cooldown;
+        t.abilityActiveTimer = data.activeTimer;
+        // Float opponent text indicator
+        battlesOpponentFloatingTextsRef.current.push({
+          id: `opp_ab_${Date.now()}_${Math.random()}`,
+          x: t.x,
+          y: t.y - 15,
+          text: `📣 OPP ABILITY ACTIVE`,
+          color: '#fbbf24',
+          life: 50
+        });
+      }
     }
+  };
+
+  const findActiveTargetForTower = (t: Tower): Bloon | undefined => {
+    // Find first bloon in range of tower
+    const inRange = bloonsRef.current.filter((b) => {
+      const dx = b.x - t.x;
+      const dy = b.y - t.y;
+      return dx * dx + dy * dy < t.range * t.range;
+    });
+    return inRange[0];
+  };
+
+  const activateTowerAbility = (towerType: TowerType) => {
+    // Find our capable tower of this type with Middle path upgraded to Level 3 or more, and not on cooldown
+    const capable = towersRef.current.find(
+      (t) =>
+        t.type === towerType &&
+        t.upgradeLevels &&
+        t.upgradeLevels[1] >= 3 &&
+        (!t.abilityCooldown || t.abilityCooldown <= 0)
+    );
+
+    if (!capable) return;
+
+    playLevelUp();
+
+    // Set timers based on standard configs
+    if (towerType === 'village') {
+      capable.abilityCooldown = 1800; // 30 seconds at 60fps
+      capable.abilityActiveTimer = 600; // 10 seconds
+      floatingTextsRef.current.push({
+        id: `ab_ctb_${Date.now()}`,
+        x: capable.x,
+        y: capable.y - 18,
+        text: '📣 CALL TO ARMS ACTIVE!',
+        color: '#a3e635',
+        life: 60
+      });
+    } else if (towerType === 'tack') {
+      capable.abilityCooldown = 900; // 15 seconds
+      capable.abilityActiveTimer = 0; // Instant burst
+
+      // Radial Tack Storm of 100 fast-flying needle projectiles!
+      for (let angleDeg = 0; angleDeg < 360; angleDeg += 3.6) {
+        const rads = (angleDeg * Math.PI) / 180;
+        projectilesRef.current.push({
+          id: `tack_storm_${capable.id}_${Date.now()}_${angleDeg}`,
+          type: 'tack',
+          x: capable.x,
+          y: capable.y,
+          vx: Math.cos(rads) * 9,
+          vy: Math.sin(rads) * 9,
+          speed: 9,
+          damage: 3,
+          pierce: 3,
+          rangeRemaining: 260,
+          originTowerId: capable.id,
+          upgradeLevels: [0, 3, 0]
+        });
+      }
+
+      floatingTextsRef.current.push({
+        id: `ab_tack_${Date.now()}`,
+        x: capable.x,
+        y: capable.y - 18,
+        text: '🌪️ TACK STORM ACTIVATED!',
+        color: '#fb7185',
+        life: 55
+      });
+    } else if (towerType === 'sniper') {
+      capable.abilityCooldown = 1200; // 20 seconds
+      capable.abilityActiveTimer = 0; // Instant drop
+
+      setCash((c) => c + 1200);
+
+      // Cute falling crate particles
+      for (let i = 0; i < 15; i++) {
+        particlesRef.current.push({
+          id: `bx_part_${Date.now()}_${i}`,
+          x: 480 + (Math.random() * 40 - 20),
+          y: 350 + (Math.random() * 40 - 20),
+          vx: Math.random() * 3 - 1.5,
+          vy: Math.random() * 1 + 1,
+          color: '#a16250',
+          size: 4,
+          life: 30,
+          maxLife: 30,
+          type: 'smoke'
+        });
+      }
+
+      floatingTextsRef.current.push({
+        id: `ab_snip_${Date.now()}`,
+        x: capable.x,
+        y: capable.y - 18,
+        text: '📦 SUPPLY DROP +$1200 airlift!',
+        color: '#22c55e',
+        life: 65
+      });
+    } else if (towerType === 'bomb') {
+      capable.abilityCooldown = 720; // 12 seconds
+      capable.abilityActiveTimer = 0; // Instant rocket launch
+
+      let target = bloonsRef.current.find((b) => b.isMoab);
+      if (!target && bloonsRef.current.length > 0) {
+        target = [...bloonsRef.current].sort((a, b) => b.hp - a.hp)[0];
+      }
+
+      if (target) {
+        const rads = Math.atan2(target.y - capable.y, target.x - capable.x);
+        projectilesRef.current.push({
+          id: `moab_assassin_${capable.id}_${Date.now()}`,
+          type: 'rocket',
+          x: capable.x,
+          y: capable.y,
+          vx: Math.cos(rads) * 16,
+          vy: Math.sin(rads) * 16,
+          speed: 16,
+          damage: 1800,
+          pierce: 1,
+          splashRadius: 100,
+          rangeRemaining: 1500,
+          originTowerId: capable.id,
+          targetBloonId: target.id,
+          upgradeLevels: [0, 3, 0]
+        });
+
+        floatingTextsRef.current.push({
+          id: `ab_bomb_${Date.now()}`,
+          x: capable.x,
+          y: capable.y - 18,
+          text: '🚀 MOAB ASSASSIN EXECUTED!',
+          color: '#f43f5e',
+          life: 60
+        });
+      }
+    } else if (towerType === 'ice') {
+      capable.abilityCooldown = 1080; // 18 seconds
+      capable.abilityActiveTimer = 0; // Instant absolute freeze override
+
+      bloonsRef.current.forEach((b) => {
+        b.hp -= 12;
+        b.isFrozen = true;
+        b.freezeTimer = Math.max(b.freezeTimer || 0, 240); // 4 seconds freeze
+
+        for (let i = 0; i < 3; i++) {
+          particlesRef.current.push({
+            id: `sn_${b.id}_${Date.now()}_${i}`,
+            x: b.x,
+            y: b.y,
+            vx: Math.random() * 4 - 2,
+            vy: Math.random() * 4 - 2,
+            color: '#93c5fd',
+            size: 3.5,
+            life: 20,
+            maxLife: 20,
+            type: 'ice'
+          });
+        }
+      });
+
+      floatingTextsRef.current.push({
+        id: `ab_ice_${Date.now()}`,
+        x: capable.x,
+        y: capable.y - 18,
+        text: '❄️ SNOW BLIZZARD FREEZE!',
+        color: '#67e8f9',
+        life: 60
+      });
+    } else if (towerType === 'wizard') {
+      capable.abilityCooldown = 1800; // 30 seconds
+      capable.abilityActiveTimer = 720; // 12 seconds
+
+      floatingTextsRef.current.push({
+        id: `ab_wiz_${Date.now()}`,
+        x: capable.x,
+        y: capable.y - 18,
+        text: '🔥 PHOENIX HELPER SUMMONED!',
+        color: '#f97316',
+        life: 60
+      });
+    } else if (towerType === 'ninja') {
+      capable.abilityCooldown = 1500; // 25 seconds
+      capable.abilityActiveTimer = 600; // 10 seconds
+
+      floatingTextsRef.current.push({
+        id: `ab_nin_${Date.now()}`,
+        x: capable.x,
+        y: capable.y - 18,
+        text: '🐉 BLOON SABOTAGE ACTIVATED!',
+        color: '#a855f7',
+        life: 60
+      });
+    } else if (towerType === 'alchemist') {
+      capable.abilityCooldown = 1440; // 24 seconds
+      capable.abilityActiveTimer = 480; // 8 seconds
+
+      floatingTextsRef.current.push({
+        id: `ab_alc_${Date.now()}`,
+        x: capable.x,
+        y: capable.y - 18,
+        text: '🧪 CHYMIC MUTATION MUTATED!',
+        color: '#22c55e',
+        life: 60
+      });
+    } else if (towerType === 'super') {
+      capable.abilityCooldown = 1800; // 30 seconds
+      capable.abilityActiveTimer = 360; // 6 seconds
+
+      floatingTextsRef.current.push({
+        id: `ab_sup_${Date.now()}`,
+        x: capable.x,
+        y: capable.y - 18,
+        text: '⚡ ROBO-PLASMA STORM ACTIVE!',
+        color: '#eab308',
+        life: 60
+      });
+    }
+
+    // Multiplayer Active Ability Dispatcher syncs
+    if (isMultiplayerConnected && connRef.current) {
+      connRef.current.send({
+        type: 'activate-ability',
+        towerId: capable.id,
+        cooldown: capable.abilityCooldown,
+        activeTimer: capable.abilityActiveTimer
+      });
+    }
+
+    // Direct re-render trigger
+    setTriggerPopCountUpdate((prev) => prev + 1);
+  };
+
+  const renderTacticalAbilitiesDeck = () => {
+    const ABILITY_CONFIGS = [
+      { type: 'village', name: 'Call to Arms', icon: '📣', color: 'from-lime-500 to-emerald-600', desc: 'Screams motivational words, reducing shot reload cooldowns of all towers by 2x for 10s!' },
+      { type: 'tack', name: 'Tack Storm', icon: '🌪️', color: 'from-rose-500 to-pink-600', desc: 'Blasts a massive radial nova of 100 fast-flying tacks in all directions!' },
+      { type: 'sniper', name: 'Supply Drop', icon: '📦', color: 'from-emerald-500 to-green-650', desc: 'Calls an airlift cargo drop, instantly adding +$1200 cash!' },
+      { type: 'bomb', name: 'MOAB Assassin', icon: '🚀', color: 'from-orange-500 to-red-650', desc: 'Fires a high-speed targeted rocket dealing 1800 massive damage to the strongest bloon!' },
+      { type: 'ice', name: 'Blizzard Freeze', icon: '❄️', color: 'from-cyan-400 to-blue-600', desc: 'Instantly flash-freezes and Cryo-shocks all bloons on-screen for 4 seconds!' },
+      { type: 'wizard', name: 'Summon Phoenix', icon: '🔥', color: 'from-amber-400 to-orange-600', desc: 'Summons a majestic burning helper phoenix firing plasma fireballs for 12s!' },
+      { type: 'ninja', name: 'Sabotage', icon: '🐉', color: 'from-purple-500 to-indigo-600', desc: 'Active Sabotage slashes the speed of all existing and oncoming bloons by 50% for 10s!' },
+      { type: 'alchemist', name: 'Transform Tonic', icon: '🧪', color: 'from-green-500 to-teal-600', desc: 'Mutates alchemist into a high-powered beast shooting gold lasers with 4x damage for 8s!' },
+      { type: 'super', name: 'Plasma Storm', icon: '⚡', color: 'from-yellow-400 to-amber-600', desc: 'Unleashes high-density radial robo-beams in 8 directions continuously for 6s!' }
+    ] as const;
+
+    return (
+      <div className="w-full max-w-2xl bg-slate-950/90 border-2 border-slate-900 rounded-2xl p-3 shadow-2xl backdrop-blur-md">
+        <div className="flex items-center justify-between border-b border-white/5 pb-1.5 mb-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-yellow-400">
+            <span className="animate-pulse">⚡</span>
+            <span>Tactical Activated Abilities Area</span>
+          </div>
+          <span className="text-[8px] text-white/40 font-bold uppercase">Middle Path (Speed/Abils) Tier 3+ unlocks abilities!</span>
+        </div>
+
+        <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-1.5">
+          {ABILITY_CONFIGS.map((config) => {
+            // Check status on board
+            const hasAny = towersRef.current.some((t) => t.type === config.type);
+            const activeTowers = towersRef.current.filter(
+              (t) => t.type === config.type && t.upgradeLevels && t.upgradeLevels[1] >= 3
+            );
+            const hasUpgraded = activeTowers.length > 0;
+
+            // Find first ready or lowest cooldown tower
+            const readyTower = activeTowers.find((t) => !t.abilityCooldown || t.abilityCooldown <= 0);
+            const activeChargingTower = activeTowers.find((t) => t.abilityActiveTimer && t.abilityActiveTimer > 0);
+            
+            const isReady = hasUpgraded && !!readyTower;
+            const isActive = hasUpgraded && !!activeChargingTower;
+            
+            // Cooldown math
+            const maxCooldown = activeTowers.length > 0 ? activeTowers.map((t) => t.abilityCooldown || 0).sort((a,b) => a - b)[0] : 0;
+            const secondsLeft = Math.ceil(maxCooldown / 60);
+
+            // Active remaining duration math
+            const activeDurationLeft = activeChargingTower?.abilityActiveTimer || 0;
+            const activeSecondsLeft = Math.ceil(activeDurationLeft / 60);
+
+            return (
+              <div key={config.type} className="relative group flex flex-col items-center">
+                <button
+                  type="button"
+                  disabled={!isReady}
+                  onClick={() => activateTowerAbility(config.type)}
+                  className={`w-full aspect-square rounded-xl border flex flex-col items-center justify-center relative overflow-hidden transition-all select-none ${
+                    isReady
+                      ? `bg-gradient-to-br ${config.color} border-white/20 shadow-lg hover:scale-105 active:scale-95 cursor-pointer`
+                      : isActive
+                      ? 'bg-slate-900 border-yellow-400 shadow-[0_0_10px_rgba(234,179,8,0.3)] animate-pulse'
+                      : hasAny
+                      ? 'bg-slate-900/60 border-indigo-500/20 opacity-60 cursor-not-allowed'
+                      : 'bg-slate-950 border-slate-900 opacity-30 cursor-not-allowed'
+                  }`}
+                >
+                  {/* Cooldown Layer Overlay */}
+                  {hasUpgraded && maxCooldown > 0 && !isActive && (
+                    <div className="absolute inset-0 bg-slate-950/85 flex flex-col items-center justify-center font-mono text-[10px] font-black text-rose-405">
+                      <span>{secondsLeft}s</span>
+                    </div>
+                  )}
+
+                  {/* Active Timer Overlay */}
+                  {isActive && (
+                    <div className="absolute inset-0 bg-yellow-500/10 flex flex-col items-center justify-center font-mono text-[9px] font-black text-yellow-300">
+                      <span className="text-[8px] uppercase tracking-wider text-yellow-400">ACTIVE</span>
+                      <span>{activeSecondsLeft}s</span>
+                    </div>
+                  )}
+
+                  <span className="text-xl filter drop-shadow-md">{config.icon}</span>
+
+                  {/* Status Indicator Pill */}
+                  {!hasAny && (
+                    <span className="absolute top-0.5 right-0.5 text-[6px] bg-slate-905 text-white/40 px-0.5 rounded uppercase font-black font-sans">
+                      None
+                    </span>
+                  )}
+                  {hasAny && !hasUpgraded && (
+                    <span className="absolute top-0.5 right-0.5 text-[6px] bg-amber-500/10 text-amber-400 px-0.5 rounded uppercase font-black font-sans border border-amber-500/20">
+                      Lock
+                    </span>
+                  )}
+                  {isReady && (
+                    <span className="absolute bottom-0.5 text-[6.5px] bg-black/60 text-green-300 px-1 rounded uppercase tracking-widest font-black font-sans border border-green-505/10">
+                      READY
+                    </span>
+                  )}
+                </button>
+
+                <span className="text-[7.5px] text-white/50 font-black mt-1 uppercase text-center truncate w-full tracking-tighter">
+                  {config.name}
+                </span>
+
+                {/* Micro hover tooltip system */}
+                <div className="absolute bottom-full mb-2 hidden group-hover:flex flex-col w-52 p-2 bg-slate-950 border border-slate-805 text-white text-[8.5px] rounded-lg shadow-2xl z-50 pointer-events-none gap-1 font-sans">
+                  <div className="flex items-center gap-1 font-black text-[9px] text-yellow-400 uppercase border-b border-white/5 pb-0.5">
+                    <span>{config.icon}</span>
+                    <span>{config.name}</span>
+                  </div>
+                  <p className="text-white/80 leading-relaxed font-bold">{config.desc}</p>
+                  <div className="mt-1 border-t border-white/5 pt-1 text-[7.5px] font-black flex flex-col gap-0.5 uppercase">
+                    {!hasAny && (
+                      <span className="text-rose-450">❌ Build a {config.type} Monkey to unlock!</span>
+                    )}
+                    {hasAny && !hasUpgraded && (
+                      <span className="text-amber-400 flex flex-col">
+                        <span>⚠️ UPGRADE REQUIRED:</span>
+                        <span className="text-white/60">Middle Path (Speed/Abils) needs Tier 3!</span>
+                      </span>
+                    )}
+                    {isReady && (
+                      <span className="text-green-400 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-ping"></span>
+                        <span>Click to activate! Ready.</span>
+                      </span>
+                    )}
+                    {isActive && (
+                      <span className="text-yellow-400">⚡ Channeling right now!</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   const sendBloonToOpponent = (bloonType: string) => {
@@ -1735,11 +2119,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           if (b.isFrozen) activeSpeed = 0.0;
           else if (b.isSlowed) activeSpeed *= 0.5;
 
+          // Ninja Sabotage active speed penalty: slashes entire field movement speed by half!
+          const isSabotageActive = towersRef.current.some(
+            (nt) => nt.type === 'ninja' && nt.abilityActiveTimer && nt.abilityActiveTimer > 0
+          );
+          if (isSabotageActive) {
+            activeSpeed *= 0.5;
+          }
+
           // Hero Obyn Greenfoot nature passive slowing card check (level 5 Obyn perk)
           const obynTower = towersRef.current.find((t) => t.type === 'hero' && t.level >= 5);
           if (obynTower && (b.type === 'Yellow' || b.type === 'Pink')) {
-            const rangeDist = Math.hypot(b.x - obynTower.x, b.y - obynTower.y);
-            if (rangeDist < obynTower.range) {
+            const dx = b.x - obynTower.x;
+            const dy = b.y - obynTower.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < obynTower.range * obynTower.range) {
               activeSpeed *= 0.75; // slow fast guys down
             }
           }
@@ -1818,19 +2212,169 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
         // --- SECTION C: PROJECTILES & TOWER SHOOTING TRACKS ---
         towersRef.current.forEach((t) => {
-          if (t.cooldown > 0) {
-            t.cooldown -= 1;
+          // Decrement ability cooldowns and active states frame-by-frame
+          if (t.abilityCooldown && t.abilityCooldown > 0) {
+            t.abilityCooldown -= 1;
+          }
+          if (t.abilityActiveTimer && t.abilityActiveTimer > 0) {
+            t.abilityActiveTimer -= 1;
           }
 
-          // Passive income towers (Farms) and decorative (Pools) do not shoot
-          if (t.type === 'pool' || t.type === 'farm') {
+          if (t.cooldown > 0) {
+            let decrement = 1;
+
+            // Monkey Village Call to Arms buff: reduces shot reload cooldown by 2x!
+            const isCallToArmsActive = towersRef.current.some(
+              (vt) => vt.type === 'village' && vt.abilityActiveTimer && vt.abilityActiveTimer > 0
+            );
+            if (isCallToArmsActive) {
+              decrement *= 2;
+            }
+
+            // Alchemist Mutated Transforming Tonic: shoots 3.5x faster!
+            if (t.type === 'alchemist' && t.abilityActiveTimer && t.abilityActiveTimer > 0) {
+              decrement *= 3.5;
+            }
+
+            t.cooldown = Math.max(0, t.cooldown - decrement);
+          }
+
+          // Super Monkey: Robo-Monkey Plasma Storm active projectile bursts!
+          if (t.type === 'super' && t.abilityActiveTimer && t.abilityActiveTimer > 0) {
+            if (t.abilityActiveTimer % 8 === 0) {
+              for (let i = 0; i < 8; i++) {
+                const angle = (i * Math.PI) / 4 + (t.abilityActiveTimer * 0.05);
+                projectilesRef.current.push({
+                  id: `super_laser_${t.id}_${t.abilityActiveTimer}_${i}`,
+                  type: 'energy',
+                  x: t.x,
+                  y: t.y,
+                  vx: Math.cos(angle) * 14,
+                  vy: Math.sin(angle) * 14,
+                  speed: 14,
+                  damage: 12,
+                  pierce: 6,
+                  rangeRemaining: 400,
+                  damageType: 'plasma',
+                  originTowerId: t.id
+                });
+              }
+            }
+          }
+
+          // Wizard fire phoenix active helper projectile blasts!
+          if (t.type === 'wizard' && t.abilityActiveTimer && t.abilityActiveTimer > 0) {
+            if (t.abilityActiveTimer % 12 === 0) {
+              const target = findActiveTargetForTower(t);
+              if (target) {
+                const angleToTarget = Math.atan2(target.y - t.y, target.x - t.x);
+                projectilesRef.current.push({
+                  id: `wizard_phoenix_${t.id}_${t.abilityActiveTimer}`,
+                  type: 'beam',
+                  x: t.x,
+                  y: t.y,
+                  vx: Math.cos(angleToTarget) * 12,
+                  vy: Math.sin(angleToTarget) * 12,
+                  speed: 12,
+                  damage: 8,
+                  pierce: 4,
+                  rangeRemaining: 555,
+                  damageType: 'plasma',
+                  originTowerId: t.id
+                });
+
+                // Spawning floating phoenix embers
+                particlesRef.current.push({
+                  id: `phoenix_ember_${Date.now()}_${Math.random()}`,
+                  x: t.x + Math.sin(Date.now() * 0.04) * 45,
+                  y: t.y + Math.cos(Date.now() * 0.04) * 45,
+                  vx: 0,
+                  vy: -1.2,
+                  color: '#f97316',
+                  size: 3.5,
+                  life: 18,
+                  maxLife: 18,
+                  type: 'spark'
+                });
+              }
+            }
+          }
+
+          // Active harvesting yields for Banana Farm
+          if (t.type === 'farm') {
+            if (roundInProgressRef.current) {
+              // Custom frame harvest timer
+              if (!t.cooldown || t.cooldown <= 0) {
+                t.cooldown = 360; // reset payout interval: 6 seconds
+
+                const lv = t.upgradeLevels || [0, 0, 0];
+                let payout = 35; // base payout of surviving step
+
+                // Top path multipliers
+                if (lv[0] === 1) payout = 50;
+                else if (lv[0] === 2) payout = 85;
+                else if (lv[0] === 3) payout = 165;
+                else if (lv[0] === 4) payout = 450;
+                else if (lv[0] >= 5) payout = 1750;
+
+                // Middle path boosts
+                if (lv[1] === 1) payout += 15;
+                else if (lv[1] === 2) payout += 35;
+                else if (lv[1] === 3) payout += 105;
+                else if (lv[1] === 4) payout += 320;
+                else if (lv[1] >= 5) payout += 1400;
+
+                // Bottom path automations
+                if (lv[2] === 1) payout += 18;
+                else if (lv[2] === 2) payout += 40;
+                else if (lv[2] === 3) payout += 125;
+                else if (lv[2] === 4) payout += 450;
+                else if (lv[2] >= 5) payout += 2100;
+
+                setCash((prev) => prev + payout);
+                t.popCount += payout; // Track total cash yield as Pop Count indicators!
+
+                // Text feedback
+                floatingTextsRef.current.push({
+                  id: `farm_active_${t.id}_${Date.now()}`,
+                  x: t.x + (Math.random() * 20 - 10),
+                  y: t.y - 12,
+                  text: `+$${payout}`,
+                  color: '#fbbf24', // Gold
+                  life: 45
+                });
+
+                // Spark cute little yellow banana flying particles!
+                for (let i = 0; i < 4; i++) {
+                  particlesRef.current.push({
+                    id: `banana_part_${Date.now()}_${Math.random()}`,
+                    x: t.x,
+                    y: t.y,
+                    vx: Math.random() * 3 - 1.5,
+                    vy: -Math.random() * 2 - 1.5,
+                    color: '#eab308', // banana yellow
+                    size: 2.5,
+                    life: 25,
+                    maxLife: 25,
+                    type: 'pop'
+                  });
+                }
+                playShoot(); // soft audio cue
+              }
+            }
+            return;
+          }
+
+          if (t.type === 'pool') {
             return;
           }
 
           // Look for targets based on targeting configurations (Close, First, Last, Strong)
           const inRangeBloons = bloonsRef.current.filter((b) => {
-            const dist = Math.hypot(b.x - t.x, b.y - t.y);
-            const insideRange = dist < t.range;
+            const dx = b.x - t.x;
+            const dy = b.y - t.y;
+            const distSq = dx * dx + dy * dy;
+            const insideRange = distSq < t.range * t.range;
             if (!insideRange) return false;
 
             // Camo invisible block check
@@ -1876,9 +2420,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           } else if (t.targetMode === 'Close') {
             // Distance to tower ascending
             inRangeBloons.sort((a, b) => {
-              const dA = Math.hypot(a.x - t.x, a.y - t.y);
-              const dB = Math.hypot(b.x - t.x, b.y - t.y);
-              return dA - dB;
+              const dxA = a.x - t.x;
+              const dyA = a.y - t.y;
+              const dxB = b.x - t.x;
+              const dyB = b.y - t.y;
+              return (dxA * dxA + dyA * dyA) - (dxB * dxB + dyB * dyB);
             });
             target = inRangeBloons[0];
           }
@@ -2211,10 +2757,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               speed = 7.0;
               playLaserZap();
             } else if (t.type === 'alchemist') {
-              projectileType = 'potion';
-              speed = 5.5;
-              splash = 60;
-              playShoot();
+              if (t.abilityActiveTimer && t.abilityActiveTimer > 0) {
+                // Mutated form fires extremely rapid laser energy!
+                projectileType = 'beam';
+                speed = 11.0;
+                splash = 0;
+                playLaserZap();
+              } else {
+                projectileType = 'potion';
+                speed = 5.5;
+                splash = 60;
+                playShoot();
+              }
             } else {
               playShoot();
             }
@@ -2234,7 +2788,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               vx: Math.cos(angle) * speed,
               vy: Math.sin(angle) * speed,
               speed,
-              damage: t.damage,
+              damage: (t.type === 'alchemist' && t.abilityActiveTimer && t.abilityActiveTimer > 0) ? t.damage * 4.0 : t.damage,
               pierce: t.pierce,
               splashRadius: splash,
               targetBloonId: (t.type === 'sub') ? target.id : undefined, // submarine uses homing
@@ -2295,10 +2849,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           let projectileHit = false;
           for (let bIdx = bloonsRef.current.length - 1; bIdx >= 0; bIdx--) {
             const b = bloonsRef.current[bIdx];
-            const hitDist = Math.hypot(b.x - p.x, b.y - p.y);
+            const dx = b.x - p.x;
+            const dy = b.y - p.y;
+            const distSq = dx * dx + dy * dy;
+            const r = b.size + 10;
 
             // Hit radius detection
-            if (hitDist < b.size + 10) {
+            if (distSq < r * r) {
               projectileHit = true;
 
               if (p.type === 'bomb' || p.type === 'potion') {
@@ -2482,6 +3039,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             if (b.isFrozen) activeSpeed = 0;
             else if (b.isSlowed) activeSpeed *= 0.5;
 
+            // Opponent Sabotage active speed checking on their own course (half speed)
+            const isOpponentSabotageActive = battlesOpponentTowersRef.current.some(
+              (nt) => nt.type === 'ninja' && nt.abilityActiveTimer && nt.abilityActiveTimer > 0
+            );
+            if (isOpponentSabotageActive) {
+              activeSpeed *= 0.5;
+            }
+
             const nextSegmentIdx = b.pathSegmentIndex + 1;
             if (nextSegmentIdx < selectedMap.track.length) {
               const startPt = selectedMap.track[b.pathSegmentIndex];
@@ -2640,6 +3205,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           if (ft.life <= 0) {
             floatingTextsRef.current.splice(ftIdx, 1);
           }
+        }
+
+        // Capping particles and floating texts to prevent rendering or processing lag
+        if (particlesRef.current.length > 150) {
+          particlesRef.current.length = 150;
+        }
+        if (floatingTextsRef.current.length > 40) {
+          floatingTextsRef.current.length = 40;
         }
       } // End speed multiplier steps loop
 
@@ -2812,15 +3385,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     }
   }, [autoPlay, roundInProgress, isGameOverOrFinished, round, showVictoryModal, isMultiplayerConnected, mpRole]);
 
-  // Target matching routing helper inside painting tick
-  const findActiveTargetForTower = (t: Tower): Bloon | undefined => {
-    const inRange = bloonsRef.current.filter((b) => Math.hypot(b.x - t.x, b.y - t.y) < t.range);
-    if (inRange.length === 0) return undefined;
-    
-    // Default First
-    inRange.sort((a, b) => b.distanceTraversed - a.distanceTraversed);
-    return inRange[0];
-  };
+
 
   // Inflict damage, trigger splits or pop children
   const damageAndPopBloon = (b: Bloon, dmg: number, originTower?: Tower) => {
@@ -3062,8 +3627,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     // Inflict splash damage on close targets with explosive immunities
     const originTower = originTowerId ? towersRef.current.find((t) => t.id === originTowerId) : undefined;
     bloonsRef.current.forEach((b) => {
-      const dist = Math.hypot(b.x - ex, b.y - ey);
-      if (dist < rad) { // inside blast radius
+      const dx = b.x - ex;
+      const dy = b.y - ey;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < rad * rad) { // inside blast radius
         if (b.type === 'Black' || b.type === 'Zebra' || b.type === 'DDT') {
           return; // Immune to explosions!
         }
@@ -3968,19 +4535,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                       GAME PAUSED
                     </h2>
                     <p className="text-white/80 text-sm max-w-md leading-relaxed font-semibold">
-                      Both players agreed to pause the game. Click Resume below to issue a resume request!
+                      The game is paused. Resume when you are ready!
                     </p>
                     <button
                       onClick={() => {
                         setMyPauseVote(false);
-                        if (isMultiplayerConnected && connRef.current) {
-                          connRef.current.send({
-                            type: 'pause-vote',
-                            paused: false
-                          });
-                        }
                       }}
-                      className="px-6 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-black text-sm rounded-xl border-b-4 border-yellow-700 shadow-xl select-none transition-all cursor-pointer uppercase tracking-wider animated-pulse"
+                      className="px-6 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-black text-sm rounded-xl border-b-4 border-yellow-700 shadow-xl select-none transition-all cursor-pointer uppercase tracking-wider"
                     >
                       ▶️ Resume Match
                     </button>
@@ -4000,13 +4561,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     <span>Opponent requested Pause - Click PAUSE to accept!</span>
                   </div>
                 )}
+
                 {/* YOUR SCREEN */}
                 <div className="flex flex-col gap-1.5 items-center w-full max-w-[480px]">
                   <div className="w-full flex justify-between items-center bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-emerald-400">
                     <span>🛡️ YOUR BOARD</span>
                     <span>LIVES: {lives}</span>
-                    <span>CASH: ${cash}</span>
-                    <span>ECO: +${battlesEco}</span>
+                    <span>CASH: \${cash}</span>
+                    <span>ECO: +\${battlesEco}</span>
                   </div>
                   <canvas
                     id="arena-canvas"
@@ -4025,8 +4587,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   <div className="w-full flex justify-between items-center bg-rose-500/10 border border-rose-500/20 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-rose-450">
                     <span>🎯 OPPONENT BOARD</span>
                     <span>LIVES: {battlesOpponentLives}</span>
-                    <span>CASH: ${battlesOpponentCash}</span>
-                    <span>ECO: +${battlesOpponentEco}</span>
+                    <span>CASH: \${battlesOpponentCash}</span>
+                    <span>ECO: +\${battlesOpponentEco}</span>
                   </div>
                   <canvas
                     id="opponent-arena-canvas"
@@ -4038,9 +4600,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 </div>
               </div>
 
+              {/* TACTICAL ACTIVE ABILITIES */}
+              <div className="w-full flex justify-center">
+                {renderTacticalAbilitiesDeck()}
+              </div>
+
               {/* RUSH OPPONENT CONTROLS */}
               <div className="w-full bg-slate-900/90 border border-white/10 p-3.5 rounded-2xl flex flex-col gap-3 font-sans shadow-xl">
-                <div className="flex flex-col sm:flex-row justify-between items-center border-b border-white/10 pb-2 gap-1.5">
+                <div className="flex flex-col sm:flex-row justify-between items-center border-b border-white/10 pb-2 gap-1.5 font-display">
                   <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
                     ⚔️ ECO RUSH OPPONENT (SEND BLOON WAVES TO GAIN INCOME & OVERWHELM DEFS)
                   </span>
@@ -4089,7 +4656,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                           <span className="text-base">{b.emoji}</span>
                           <span className="text-[9px] font-black tracking-tight leading-none">{b.type}</span>
                           <span className={`text-[8px] font-extrabold ${isLocked ? 'text-slate-500' : 'text-yellow-400'}`}>
-                            {isLocked ? `R${b.unlockRound}` : `$${b.cost}`}
+                            {isLocked ? `R${b.unlockRound}` : `\$\${b.cost}`}
                           </span>
                         </button>
 
@@ -4120,42 +4687,45 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               </div>
             </div>
           ) : (
-            <div className="relative w-full max-w-2xl aspect-square">
-              <canvas
-                id="arena-canvas"
-                ref={canvasRef}
-                width={1000}
-                height={1000}
-                onMouseMove={handleCanvasMouseMove}
-                onMouseLeave={handleCanvasMouseLeave}
-                onClick={handleCanvasClick}
-                className="w-full h-full bg-slate-900 border-4 border-black/30 rounded-3xl cursor-crosshair shadow-2xl block"
-              />
-              {isGamePaused && (
-                <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center text-center p-6 border border-yellow-500/30 gap-4">
-                  <div className="w-20 h-20 bg-yellow-500/10 border-4 border-yellow-500 rounded-full flex items-center justify-center text-4xl animate-pulse text-yellow-400">
-                    ⏸️
+            <div className="flex flex-col items-center gap-4 w-full">
+              <div className="relative w-full max-w-2xl aspect-square">
+                <canvas
+                  id="arena-canvas"
+                  ref={canvasRef}
+                  width={1000}
+                  height={1000}
+                  onMouseMove={handleCanvasMouseMove}
+                  onMouseLeave={handleCanvasMouseLeave}
+                  onClick={handleCanvasClick}
+                  className="w-full h-full bg-slate-900 border-4 border-black/30 rounded-3xl cursor-crosshair shadow-2xl block"
+                />
+                {isGamePaused && (
+                  <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center text-center p-6 border border-yellow-500/30 gap-4">
+                    <div className="w-20 h-20 bg-yellow-500/10 border-4 border-yellow-500 rounded-full flex items-center justify-center text-4xl animate-pulse text-yellow-400">
+                      ⏸️
+                    </div>
+                    <h2 className="text-2xl font-black uppercase text-yellow-400 tracking-wider">
+                      GAME PAUSED
+                    </h2>
+                    <p className="text-white/80 text-sm max-w-md leading-relaxed font-semibold">
+                      The game is paused. Resume when you are ready!
+                    </p>
+                    <button
+                      onClick={() => {
+                        setMyPauseVote(false);
+                      }}
+                      className="px-6 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-black text-sm rounded-xl border-b-4 border-yellow-700 shadow-xl select-none transition-all cursor-pointer uppercase tracking-wider"
+                    >
+                      ▶️ Resume Match
+                    </button>
                   </div>
-                  <h2 className="text-2xl font-black uppercase text-yellow-400 tracking-wider">
-                    GAME PAUSED
-                  </h2>
-                  <p className="text-white/80 text-sm max-w-md leading-relaxed font-semibold">
-                    The game is paused. Resume when you are ready!
-                  </p>
-                  <button
-                    onClick={() => {
-                      setMyPauseVote(false);
-                    }}
-                    className="px-6 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-black text-sm rounded-xl border-b-4 border-yellow-700 shadow-xl select-none transition-all cursor-pointer uppercase tracking-wider"
-                  >
-                    ▶️ Resume Match
-                  </button>
-                </div>
-              )}
+                )}
+              </div>
+              {renderTacticalAbilitiesDeck()}
             </div>
           )}
 
-          {gameMode === 'sandbox' && (
+                    {gameMode === 'sandbox' && (
             <div
               id="sandbox-admin-panel"
               className="w-full xl:w-96 bg-slate-950/95 border-4 border-amber-500/35 p-4 rounded-3xl shadow-2xl flex flex-col gap-3 font-sans shrink-0 backdrop-blur text-white border-b-8"
