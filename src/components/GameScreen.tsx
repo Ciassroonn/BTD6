@@ -1876,6 +1876,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     let animationFrameId: number;
     let framesCounter = 0;
     let lastTickTime = Date.now();
+    let stepAccumulator = 0;
 
     const gameTick = () => {
       lastTickTime = Date.now();
@@ -1891,7 +1892,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       // Fast forward speed loops are computed by repeating update loops inside each single frames loop!
       // This increases performance without lag!
       // If paused, update loops become 0, so movement/firing/spawning is completely frozen!
-      const loopsRatio = isGamePausedRef.current ? 0 : speedMultiplierRef.current;
+      const rawSpeed = isGamePausedRef.current ? 0 : speedMultiplierRef.current;
+      stepAccumulator += rawSpeed;
+      const loopsRatio = Math.floor(stepAccumulator);
+      stepAccumulator -= loopsRatio;
 
       for (let step = 0; step < loopsRatio; step++) {
         // --- SECTION A: SPAWNING BLOCKS ---
@@ -3759,7 +3763,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               id="btn-fast-forward"
               onClick={() => {
                 if (gameMode === 'battles2') {
-                  const nextVote = mySpeedVote === 1 ? 2 : mySpeedVote === 2 ? 3 : 1;
+                  const nextVote = mySpeedVote === 0.5 ? 1 : mySpeedVote === 1 ? 2 : mySpeedVote === 2 ? 3 : 0.5;
                   setMySpeedVote(nextVote);
                   if (isMultiplayerConnected && connRef.current) {
                     connRef.current.send({
@@ -3768,7 +3772,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     });
                   }
                 } else {
-                  const next = speedMultiplier === 1 ? 2 : speedMultiplier === 2 ? 3 : 1;
+                  const next = speedMultiplier === 0.5 ? 1 : speedMultiplier === 1 ? 2 : speedMultiplier === 2 ? 3 : 0.5;
                   setSpeedMultiplier(next);
                   setMySpeedVote(next);
                 }
@@ -3778,10 +3782,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             >
               {gameMode === 'battles2' ? (
                 mySpeedVote === opponentSpeedVote
-                  ? `${speedMultiplier}x Speed`
-                  : `${mySpeedVote}x (Wait ${opponentSpeedVote}x)`
+                  ? (speedMultiplier === 0.5 ? '🐌 0.5x Speed' : speedMultiplier === 1 ? '▶️ 1x Speed' : speedMultiplier === 2 ? '⏩ 2x Speed' : '⚡ 3x Speed')
+                  : `${mySpeedVote === 0.5 ? '🐌 0.5' : mySpeedVote === 1 ? '▶️ 1' : mySpeedVote === 2 ? '⏩ 2' : '⚡ 3'}x (Wait ${opponentSpeedVote}x)`
               ) : (
-                `${speedMultiplier}x Speed`
+                speedMultiplier === 0.5 ? '🐌 0.5x Slow' : speedMultiplier === 1 ? '▶️ 1x Speed' : speedMultiplier === 2 ? '⏩ 2x Fast' : '⚡ 3x Hyper'
               )}
             </button>
 
