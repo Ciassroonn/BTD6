@@ -308,7 +308,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Core Game State Variables
-  const maxRounds = difficulty === 'Easy' ? 40 : difficulty === 'Medium' ? 60 : difficulty === 'Hard' ? 80 : 100;
+  const maxRounds = gameMode === 'battles2' ? 150 : (difficulty === 'Easy' ? 40 : difficulty === 'Medium' ? 60 : difficulty === 'Hard' ? 80 : 100);
   const victoryRewardsValue = difficulty === 'Easy' ? 150 : difficulty === 'Medium' ? 250 : difficulty === 'Hard' ? 350 : 500;
 
   // Get active upgrade cost with discount and difficulty multiplier
@@ -398,6 +398,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(getMuted());
   const [speedMultiplier, setSpeedMultiplier] = useState<number>(1); // Fast Forward multiplier: 1, 2, 3
+  const [mySpeedVote, setMySpeedVote] = useState<number>(1);
+  const [opponentSpeedVote, setOpponentSpeedVote] = useState<number>(1);
+  const [myPauseVote, setMyPauseVote] = useState<boolean>(false);
+  const [opponentPauseVote, setOpponentPauseVote] = useState<boolean>(false);
   const [totalPopCount, setTotalPopCount] = useState<number>(0);
 
   // Selection & Placement States
@@ -718,6 +722,28 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const freePlayActiveRef = useRef<boolean>(freePlayActive);
   const heroTypeRef = useRef<string>(heroType);
 
+  const isGamePaused = gameMode === 'battles2'
+    ? (isMultiplayerConnected ? (myPauseVote && opponentPauseVote) : myPauseVote)
+    : myPauseVote;
+
+  const isGamePausedRef = useRef<boolean>(isGamePaused);
+  useEffect(() => { isGamePausedRef.current = isGamePaused; }, [isGamePaused]);
+
+  // Synchronise speed voting changes to speed multiplier
+  useEffect(() => {
+    if (gameMode === 'battles2') {
+      if (isMultiplayerConnected) {
+        if (mySpeedVote === opponentSpeedVote) {
+          setSpeedMultiplier(mySpeedVote);
+        } else {
+          setSpeedMultiplier(1);
+        }
+      } else {
+        setSpeedMultiplier(mySpeedVote);
+      }
+    }
+  }, [mySpeedVote, opponentSpeedVote, gameMode, isMultiplayerConnected]);
+
   useEffect(() => { roundRef.current = round; }, [round]);
   useEffect(() => { selectedShopTowerRef.current = selectedShopTower; }, [selectedShopTower]);
   useEffect(() => { mousePosRef.current = mousePos; }, [mousePos]);
@@ -805,6 +831,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     setBattlesOpponentLives(150);
     setBattlesOpponentEco(250);
     setTriggerPopCountUpdate((prev) => prev + 1);
+    setMySpeedVote(1);
+    setOpponentSpeedVote(1);
+    setMyPauseVote(false);
+    setOpponentPauseVote(false);
+    setSpeedMultiplier(1);
   };
 
   const startBattlesHost = () => {
@@ -1001,10 +1032,15 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       battlesOpponentEcoRef.current = data.eco;
       battlesOpponentCashRef.current = data.cash;
       battlesOpponentLivesRef.current = data.lives;
+    } else if (data.type === 'speed-vote') {
+      setOpponentSpeedVote(data.speed);
+    } else if (data.type === 'pause-vote') {
+      setOpponentPauseVote(data.paused);
     }
   };
 
   const sendBloonToOpponent = (bloonType: string) => {
+    if (isGamePausedRef.current) return;
     const config = SENDABLE_BLOONS.find((b) => b.type === bloonType);
     if (!config) return;
 
@@ -1218,6 +1254,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   // Place a Monkey
   const handlePlacementClick = () => {
+    if (isGamePausedRef.current) return;
     if (!selectedShopTower) return;
     if (!checkPlacementValidity(mousePos.x, mousePos.y)) return;
 
@@ -1343,6 +1380,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   // Leveling up Heroes / Monkey upgrades triggered inside UI
   const upgradeTower = (tower: Tower, pathIndex?: number) => {
+    if (isGamePausedRef.current) return;
     if (tower.type === 'hero') {
       // Manual hero training leveling costs cash, boosts range and attack speeds
       const lvCost = Math.round(250 * tower.level * 1.2);
@@ -1433,6 +1471,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   // Sell visual Tower
   const sellTower = (tower: Tower) => {
+    if (isGamePausedRef.current) return;
     if (difficulty === 'CHIMPS') return;
     const refundValue = Math.round(tower.cost * 0.72);
     setCash((prev) => prev + refundValue);
@@ -1452,8 +1491,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   useEffect(() => {
     let animationFrameId: number;
     let framesCounter = 0;
+    let lastTickTime = Date.now();
 
     const gameTick = () => {
+      lastTickTime = Date.now();
       const canvas = canvasRef.current;
       if (!canvas || isGameOverOrFinishedRef.current) return;
 
@@ -1465,7 +1506,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       // Fast forward speed loops are computed by repeating update loops inside each single frames loop!
       // This increases performance without lag!
-      const loopsRatio = speedMultiplierRef.current;
+      // If paused, update loops become 0, so movement/firing/spawning is completely frozen!
+      const loopsRatio = isGamePausedRef.current ? 0 : speedMultiplierRef.current;
 
       for (let step = 0; step < loopsRatio; step++) {
         // --- SECTION A: SPAWNING BLOCKS ---
@@ -1723,7 +1765,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             }
           } else {
             // Leakage! Bloon has fully traversed the track list and escaped
-            const leakDamage = b.isMoab ? 40 : b.maxHp;
+            const leakDamage = gameModeRef.current === 'battles2' ? 1 : (b.isMoab ? 40 : b.maxHp);
             if (gameModeRef.current !== 'sandbox') {
               setLives((curr) => {
                 const remaining = curr - leakDamage;
@@ -2459,7 +2501,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               }
             } else {
               // Opponent leaks!
-              const leakDamage = b.isMoab ? 40 : b.maxHp;
+              const leakDamage = gameModeRef.current === 'battles2' ? 1 : (b.isMoab ? 40 : b.maxHp);
               oBloons.splice(i, 1);
 
               setBattlesOpponentLives((curr) => {
@@ -2728,7 +2770,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     };
 
     animationFrameId = requestAnimationFrame(gameTick);
-    return () => cancelAnimationFrame(animationFrameId);
+
+    // Dynamic background runner for battles2 to never drop connections/simulation ticks in hidden tabs
+    const fallbackInterval = setInterval(() => {
+      if (gameModeRef.current === 'battles2') {
+        const timeSinceLastTick = Date.now() - lastTickTime;
+        if (timeSinceLastTick >= 33) { // 30fps fallback while backgrounded
+          gameTick();
+        }
+      }
+    }, 33);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      clearInterval(fallbackInterval);
+    };
   }, [dimensions]);
 
   // Autoplay handler to fix the "autoplay doesn't work" bug
@@ -3135,13 +3191,54 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             <button
               id="btn-fast-forward"
               onClick={() => {
-                const next = speedMultiplier === 1 ? 2 : speedMultiplier === 2 ? 3 : 1;
-                setSpeedMultiplier(next);
+                if (gameMode === 'battles2') {
+                  const nextVote = mySpeedVote === 1 ? 2 : mySpeedVote === 2 ? 3 : 1;
+                  setMySpeedVote(nextVote);
+                  if (isMultiplayerConnected && connRef.current) {
+                    connRef.current.send({
+                      type: 'speed-vote',
+                      speed: nextVote
+                    });
+                  }
+                } else {
+                  const next = speedMultiplier === 1 ? 2 : speedMultiplier === 2 ? 3 : 1;
+                  setSpeedMultiplier(next);
+                  setMySpeedVote(next);
+                }
               }}
               className="px-2.5 py-1.5 bg-blue-500 hover:bg-blue-400 border-b-2 border-blue-700 text-white text-xs font-black rounded-lg cursor-pointer uppercase font-sans whitespace-nowrap transition-all"
               title="Toggle speed multiplier"
             >
-              {speedMultiplier}x Speed
+              {gameMode === 'battles2' ? (
+                mySpeedVote === opponentSpeedVote
+                  ? `${speedMultiplier}x Speed`
+                  : `${mySpeedVote}x (Wait ${opponentSpeedVote}x)`
+              ) : (
+                `${speedMultiplier}x Speed`
+              )}
+            </button>
+
+            {/* Pause Button */}
+            <button
+              id="btn-pause-toggle"
+              onClick={() => {
+                const nextPause = !myPauseVote;
+                setMyPauseVote(nextPause);
+                if (gameMode === 'battles2' && isMultiplayerConnected && connRef.current) {
+                  connRef.current.send({
+                    type: 'pause-vote',
+                    paused: nextPause
+                  });
+                }
+              }}
+              className={`px-2.5 py-1.5 ${
+                myPauseVote 
+                  ? 'bg-amber-600 hover:bg-amber-500 border-amber-850' 
+                  : 'bg-yellow-500 hover:bg-yellow-400 border-yellow-700'
+              } border-b-2 text-white text-xs font-black rounded-lg cursor-pointer uppercase font-sans whitespace-nowrap transition-all`}
+              title="Pause/Resume Game"
+            >
+              {myPauseVote ? '⏸️ Proposed Pause' : '⏸️ Pause'}
             </button>
 
             <div className="flex items-center gap-1.5 text-[10px] text-cyan-300 font-black uppercase font-sans select-none bg-cyan-950/40 px-2.5 py-1.5 rounded-lg border border-cyan-500/25">
@@ -3861,6 +3958,48 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     </p>
                   </div>
                 )}
+
+                {isGamePaused && (
+                  <div className="absolute inset-0 z-45 bg-black/60 backdrop-blur-md rounded-2xl flex flex-col items-center justify-center text-center p-6 border border-yellow-500/30 gap-4">
+                    <div className="w-20 h-20 bg-yellow-500/10 border-4 border-yellow-500 rounded-full flex items-center justify-center text-4xl animate-pulse text-yellow-400">
+                      ⏸️
+                    </div>
+                    <h2 className="text-2xl font-black uppercase text-yellow-400 tracking-wider">
+                      GAME PAUSED
+                    </h2>
+                    <p className="text-white/80 text-sm max-w-md leading-relaxed font-semibold">
+                      Both players agreed to pause the game. Click Resume below to issue a resume request!
+                    </p>
+                    <button
+                      onClick={() => {
+                        setMyPauseVote(false);
+                        if (isMultiplayerConnected && connRef.current) {
+                          connRef.current.send({
+                            type: 'pause-vote',
+                            paused: false
+                          });
+                        }
+                      }}
+                      className="px-6 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-black text-sm rounded-xl border-b-4 border-yellow-700 shadow-xl select-none transition-all cursor-pointer uppercase tracking-wider animated-pulse"
+                    >
+                      ▶️ Resume Match
+                    </button>
+                  </div>
+                )}
+
+                {!isGamePaused && myPauseVote && (
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-45 bg-amber-500/90 text-slate-950 border border-amber-405 px-4 py-2 rounded-xl flex items-center gap-2 shadow-2xl text-[10px] font-black uppercase tracking-wider animate-bounce select-none">
+                    <span className="w-2 h-2 bg-slate-950 rounded-full animate-ping"></span>
+                    <span>PAUSE REQUESTED - Waiting for opponent (1/2)</span>
+                  </div>
+                )}
+
+                {!isGamePaused && opponentPauseVote && (
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-45 bg-cyan-500/95 text-slate-950 border border-cyan-450 px-4 py-2 rounded-xl flex items-center gap-2 shadow-2xl text-[10px] font-black uppercase tracking-wider animate-bounce select-none">
+                    <span className="w-2 h-2 bg-slate-950 rounded-full animate-ping"></span>
+                    <span>Opponent requested Pause - Click PAUSE to accept!</span>
+                  </div>
+                )}
                 {/* YOUR SCREEN */}
                 <div className="flex flex-col gap-1.5 items-center w-full max-w-[480px]">
                   <div className="w-full flex justify-between items-center bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-emerald-400">
@@ -3981,16 +4120,39 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               </div>
             </div>
           ) : (
-            <canvas
-              id="arena-canvas"
-              ref={canvasRef}
-              width={1000}
-              height={1000}
-              onMouseMove={handleCanvasMouseMove}
-              onMouseLeave={handleCanvasMouseLeave}
-              onClick={handleCanvasClick}
-              className="w-full max-w-2xl aspect-square bg-slate-900 border-4 border-black/30 rounded-3xl cursor-crosshair shadow-2xl block"
-            />
+            <div className="relative w-full max-w-2xl aspect-square">
+              <canvas
+                id="arena-canvas"
+                ref={canvasRef}
+                width={1000}
+                height={1000}
+                onMouseMove={handleCanvasMouseMove}
+                onMouseLeave={handleCanvasMouseLeave}
+                onClick={handleCanvasClick}
+                className="w-full h-full bg-slate-900 border-4 border-black/30 rounded-3xl cursor-crosshair shadow-2xl block"
+              />
+              {isGamePaused && (
+                <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center text-center p-6 border border-yellow-500/30 gap-4">
+                  <div className="w-20 h-20 bg-yellow-500/10 border-4 border-yellow-500 rounded-full flex items-center justify-center text-4xl animate-pulse text-yellow-400">
+                    ⏸️
+                  </div>
+                  <h2 className="text-2xl font-black uppercase text-yellow-400 tracking-wider">
+                    GAME PAUSED
+                  </h2>
+                  <p className="text-white/80 text-sm max-w-md leading-relaxed font-semibold">
+                    The game is paused. Resume when you are ready!
+                  </p>
+                  <button
+                    onClick={() => {
+                      setMyPauseVote(false);
+                    }}
+                    className="px-6 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-black text-sm rounded-xl border-b-4 border-yellow-700 shadow-xl select-none transition-all cursor-pointer uppercase tracking-wider"
+                  >
+                    ▶️ Resume Match
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {gameMode === 'sandbox' && (
